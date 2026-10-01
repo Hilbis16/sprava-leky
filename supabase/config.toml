@@ -1,0 +1,19 @@
+project_id = "sprava-leku"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+
+[db]
+port = 54322
+major_version = 17
+
+[auth]
+enabled = true
+site_url = "mojeleky://"
+enable_anonymous_sign_ins = true
+
+[functions.push-notifications]
+verify_jwt = false

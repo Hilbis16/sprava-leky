@@ -1,0 +1,57 @@
+{
+  "expo": {
+    "name": "Moje léky",
+    "slug": "sprava-leku",
+    "scheme": "mojeleky",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "cz.mojeleky.family",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Fotoaparát slouží ke čtení QR eReceptu a údajů z krabičky léku.",
+        "NSPhotoLibraryUsageDescription": "Vyberte fotografii krabičky pro předvyplnění údajů o léku."
+      }
+    },
+    "android": {
+      "package": "cz.mojeleky.family",
+      "adaptiveIcon": {
+        "backgroundColor": "#EAF7F1"
+      },
+      "permissions": ["CAMERA", "POST_NOTIFICATIONS"]
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Povolte fotoaparát pro skenování eReceptu a krabiček léků.",
+          "recordAudioAndroid": false,
+          "barcodeScannerEnabled": true
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Vyberte fotografii krabičky pro předvyplnění údajů."
+        }
+      ],
+      "expo-notifications",
+      "expo-secure-store"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "REPLACE_WITH_EAS_PROJECT_ID"
+      }
+    }
+  }
+}
