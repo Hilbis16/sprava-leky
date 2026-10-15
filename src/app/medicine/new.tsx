@@ -7,7 +7,7 @@ import { Alert, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Switch, T
 import { Screen } from '@/components/Screen';
 import { Button, Card } from '@/components/ui';
 import { formatEreceptId, normalizeEreceptId } from '@/domain/erecept';
-import { normalizeTime } from '@/domain/schedule';
+import { formatCzechDate, localDateKey, normalizeTime, parseCzechDate } from '@/domain/schedule';
 import type { DayPeriod, DoseUnit } from '@/domain/types';
 import { daysLabel, everyDay, weekDays } from '@/domain/weekdays';
 // Metro selects ocr.native.ts or ocr.web.ts for the target platform.
@@ -35,6 +35,9 @@ export default function AddMedicineScreen() {
   const [prescription, setPrescription] = useState(editing?.prescription ?? Boolean(params.ereceptId));
   const [ereceptId, setEreceptId] = useState(editing?.ereceptId ? formatEreceptId(editing.ereceptId) : normalizeEreceptId(params.ereceptId ?? '') ?? '');
   const [days, setDays] = useState<number[]>(editingRegimen?.daysOfWeek ?? everyDay);
+  const [note, setNote] = useState(editing?.note ?? '');
+  const [limited, setLimited] = useState(Boolean(editingRegimen?.endsOn));
+  const [endDate, setEndDate] = useState(editingRegimen?.endsOn ? formatCzechDate(editingRegimen.endsOn) : '');
   const [periods, setPeriods] = useState<Record<DayPeriod, PeriodState>>(() => Object.fromEntries(allPeriods.map((period) => {
     const existing = editingRegimen?.times.find((item) => item.period === period);
     return [period, existing
@@ -74,6 +77,8 @@ export default function AddMedicineScreen() {
     if (step === 2 && days.length === 0) return Alert.alert('Vyberte dny', 'Lék musí mít alespoň jeden den v týdnu.');
     if (step === 2 && times.some((time) => !normalizeTime(time.time))) return Alert.alert('Neplatný čas', 'Čas zadejte ve tvaru 08:00.');
     if (step === 2 && new Set(times.map((time) => time.time)).size !== times.length) return Alert.alert('Stejný čas', 'Dvě dávky nemohou mít stejný čas.');
+    if (step === 2 && limited && !parseCzechDate(endDate)) return Alert.alert('Zkontrolujte datum', 'Poslední den léčby zadejte ve tvaru 31. 12. 2026.');
+    if (step === 2 && limited && parseCzechDate(endDate)! < localDateKey(new Date())) return Alert.alert('Datum je v minulosti', 'Poslední den léčby nemůže být dříve než dnes.');
     setStep((value) => Math.min(3, value + 1));
   };
 
@@ -81,6 +86,7 @@ export default function AddMedicineScreen() {
     const draft = {
       profileId: profile.id, name, strength, packageSize: Number(packageSize), unit, prescription,
       ereceptId: normalizeEreceptId(ereceptId) ?? undefined, times, daysOfWeek: days,
+      note, endsOn: limited ? parseCzechDate(endDate) ?? undefined : undefined,
     };
     if (editing) {
       updateMedicine(editing.id, draft);
@@ -105,6 +111,7 @@ export default function AddMedicineScreen() {
           </View>
           <Field label="Název léku" value={name} onChangeText={setName} placeholder="např. Atorvastatin" autoFocus />
           <Field label="Síla" value={strength} onChangeText={setStrength} placeholder="např. 20 mg" />
+          <Field label="Pokyny k užívání (nepovinné)" value={note} onChangeText={setNote} placeholder="např. nalačno, zapít vodou" maxLength={200} />
           <Field label="ID eReceptu (volitelné)" value={ereceptId} onChangeText={setEreceptId} placeholder="XXXX XXXX XXXX" autoCapitalize="characters" />
           <Text style={styles.hint}><Ionicons name="shield-checkmark-outline" size={15} /> Fotografie se zpracuje v telefonu a neukládá se do cloudu.</Text>
         </> : null}
@@ -125,6 +132,9 @@ export default function AddMedicineScreen() {
             ))}
           </View>
           {days.length !== 7 ? <Pressable onPress={() => setDays(everyDay)}><Text style={styles.link}>Vybrat každý den</Text></Pressable> : null}
+          <Text style={styles.label}>Jak dlouho?</Text>
+          <View style={styles.segment}><Choice label="Dlouhodobě" selected={!limited} onPress={() => setLimited(false)} /><Choice label="Do data (kúra)" selected={limited} onPress={() => setLimited(true)} /></View>
+          {limited ? <Field label="Poslední den léčby" value={endDate} onChangeText={setEndDate} placeholder="např. 24. 10. 2026" keyboardType="numbers-and-punctuation" /> : null}
           <Text style={styles.label}>Denní dávky</Text>
           {allPeriods.map((period) => {
             const state = periods[period];
@@ -159,6 +169,8 @@ export default function AddMedicineScreen() {
             <SummaryRow label="Pro koho" value={profile.displayName} />
             <SummaryRow label="Balení" value={`${packageSize} ${unit === 'tablet' ? 'tablet' : 'kapslí'}`} />
             <SummaryRow label="Dny" value={daysLabel(days)} />
+            <SummaryRow label="Délka" value={limited && parseCzechDate(endDate) ? `Do ${formatCzechDate(parseCzechDate(endDate)!)}` : 'Dlouhodobě'} />
+            {note.trim() ? <SummaryRow label="Pokyny" value={note.trim()} /> : null}
             <SummaryRow label="Dávky" value={times.map((time) => `${time.time} · ${time.amount}`).join(', ')} />
             <SummaryRow label="Typ" value={prescription ? 'Na předpis' : 'Volně prodejný'} />
           </Card>

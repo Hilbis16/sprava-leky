@@ -3,7 +3,9 @@ import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
 import { cloudEnabled, ensureCloudSession, supabase } from '@/data/supabase';
-import type { Medication, RegimenRule } from '@/domain/types';
+import { forecastMedication, stockAlertDates } from '@/domain/forecast';
+import { courseFinished } from '@/domain/schedule';
+import type { AppData, Medication, RegimenRule } from '@/domain/types';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -81,4 +83,52 @@ export async function scheduleMedicationReminders(medication: Medication, regime
       });
     }
   }
+}
+
+let lastStockSignature = '';
+
+/**
+ * Schedules "running out" reminders (by default 14 and 7 days ahead) for every
+ * active medicine. Several medicines on one day share one generic reminder.
+ * Never asks for permission itself; it runs in the background after changes.
+ */
+export async function scheduleStockAlerts(data: AppData, now = new Date()): Promise<void> {
+  const moments = new Set<number>();
+  for (const medication of data.medications) {
+    const regimen = data.regimens.find((item) => item.medicationId === medication.id);
+    if (!medication.active || courseFinished(regimen, now)) continue;
+    const { shortageAt } = forecastMedication(medication, regimen, data.inventoryEvents, data.doseActions, now);
+    stockAlertDates(shortageAt, data.notificationPreferences.stockThresholdDays, now).forEach((at) => moments.add(at.getTime()));
+  }
+  const signature = [...moments].sort().join(',');
+  if (signature === lastStockSignature) return;
+  const permission = await Notifications.getPermissionsAsync();
+  if (!permission.granted) return;
+  lastStockSignature = signature;
+
+  const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+  await Promise.all(scheduled
+    .filter((request) => request.content.data?.kind === 'stock')
+    .map((request) => Notifications.cancelScheduledNotificationAsync(request.identifier)));
+  for (const at of moments) {
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: 'Moje léky',
+        body: 'Některý lék brzy dojde. Otevřete aplikaci a zkontrolujte zásoby.',
+        data: { kind: 'stock', route: '/(tabs)/stock' },
+      },
+      trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: new Date(at), channelId: 'medicine-reminders' },
+    });
+  }
+}
+
+/** Opens the screen a tapped notification points to, also after a cold start. */
+export function subscribeToNotificationRoutes(navigate: (route: string) => void): () => void {
+  const open = (response: Notifications.NotificationResponse | null) => {
+    const route = response?.notification.request.content.data?.route;
+    if (typeof route === 'string' && route.startsWith('/')) navigate(route);
+  };
+  void Notifications.getLastNotificationResponseAsync().then(open);
+  const subscription = Notifications.addNotificationResponseReceivedListener(open);
+  return () => subscription.remove();
 }

@@ -31,6 +31,26 @@ export function normalizeTime(raw: string): string | null {
   return `${pad(hours)}:${pad(minutes)}`;
 }
 
+/** Parses "31.12.2026" (also "1. 2. 2026") into a date key; null when invalid. */
+export function parseCzechDate(raw: string): string | null {
+  const match = raw.trim().match(/^(\d{1,2})\.\s*(\d{1,2})\.\s*(\d{4})$/);
+  if (!match) return null;
+  const [day, month, year] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  const date = new Date(year, month - 1, day);
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return null;
+  return localDateKey(date);
+}
+
+export function formatCzechDate(dateKey: string): string {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  return `${day}. ${month}. ${year}`;
+}
+
+/** A limited course is over once its last day has passed. */
+export function courseFinished(regimen: RegimenRule | undefined, now = new Date()): boolean {
+  return Boolean(regimen?.endsOn && regimen.endsOn < localDateKey(now));
+}
+
 export function occurrenceId(medicationId: string, scheduledAt: Date): string {
   return `${medicationId}:${scheduledAt.toISOString()}`;
 }
@@ -51,6 +71,7 @@ export function occurrencesForRange(
   const effectiveFrom = new Date(`${regimen.effectiveFrom}T00:00:00`);
 
   while (cursor <= lastDay) {
+    if (regimen.endsOn && localDateKey(cursor) > regimen.endsOn) break;
     if (cursor >= effectiveFrom && regimen.daysOfWeek.includes(cursor.getDay())) {
       for (const doseTime of regimen.times) {
         const at = scheduledDate(cursor, doseTime.time);

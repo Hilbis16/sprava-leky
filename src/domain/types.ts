@@ -33,6 +33,8 @@ export interface RegimenRule {
   daysOfWeek: number[];
   times: DoseTime[];
   asNeeded: boolean;
+  /** Last day (YYYY-MM-DD, inclusive) of a limited course; open-ended when missing. */
+  endsOn?: string;
 }
 
 export interface Medication {
@@ -85,6 +87,8 @@ export interface DoseOccurrence {
 export interface PrescriberContact {
   id: string;
   profileId: string;
+  /** Missing in data saved before pharmacies existed; treat as 'doctor'. */
+  kind?: 'doctor' | 'pharmacy';
   name: string;
   phone?: string;
   email?: string;
@@ -105,7 +109,8 @@ export interface RxRequest {
 
 export interface PendingMutation {
   id: string;
-  entity: 'dose_action' | 'dose_action_undo' | 'inventory_event' | 'medication' | 'prescriber' | 'rx_request';
+  entity: 'dose_action' | 'dose_action_undo' | 'inventory_event' | 'medication' | 'prescriber' | 'prescriber_remove'
+    | 'profile' | 'profile_remove' | 'rx_request';
   payload: unknown;
   createdAt: string;
 }
@@ -152,4 +157,6 @@ export interface MedicineDraft {
   ereceptId?: string;
   times: Pick<DoseTime, 'time' | 'amount' | 'period'>[];
   daysOfWeek: number[];
+  note?: string;
+  endsOn?: string;
 }

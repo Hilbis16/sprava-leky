@@ -6,13 +6,15 @@ import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Screen } from '@/components/Screen';
 import { Button, Card, EmptyState, SectionTitle, StatusPill } from '@/components/ui';
 import { forecastMedication, forecastTone } from '@/domain/forecast';
+import { courseFinished, formatCzechDate } from '@/domain/schedule';
 import { useAppState } from '@/state/AppState';
 import { colors } from '@/theme';
 
 export default function StockScreen() {
   const { data, addStock } = useAppState();
   if (!data) return null;
-  const meds = data.medications.filter((med) => med.profileId === data.currentProfileId && med.active);
+  const meds = data.medications.filter((med) => med.profileId === data.currentProfileId && med.active
+    && !courseFinished(data.regimens.find((item) => item.medicationId === med.id)));
   return (
     <Screen>
       <View style={styles.header}><View><Text style={styles.eyebrow}>PŘEHLED</Text><Text style={styles.title}>Zásoby léků</Text></View><Button label="Přidat" icon="add" onPress={() => router.push('/medicine/new')} /></View>
@@ -29,10 +31,13 @@ export default function StockScreen() {
               <View style={styles.medTop}>
                 <View style={styles.medIcon}><Ionicons name={medication.unit === 'capsule' ? 'ellipse' : 'medical'} size={22} color={colors.primary} /></View>
                 <View style={styles.medBody}><Text style={styles.medName}>{medication.name}</Text><Text style={styles.medStrength}>{medication.strength ?? 'Bez uvedené síly'}</Text></View>
-                <StatusPill tone={tone === 'unknown' ? 'neutral' : tone} label={forecast.daysRemaining === null ? 'Dle potřeby' : `${forecast.daysRemaining} dní`} />
+                <StatusPill tone={tone === 'unknown' ? 'neutral' : tone} label={forecast.daysRemaining !== null ? `${forecast.daysRemaining} dní` : regimen?.endsOn ? 'Do konce léčby' : 'Dostatek'} />
               </View>
               <View style={styles.stockRow}><Text style={styles.stockNumber}>{forecast.estimatedStock}</Text><Text style={styles.stockUnit}>{medication.unit === 'tablet' ? 'tablet zbývá' : 'kapslí zbývá'}</Text></View>
-              <Text style={styles.shortage}>{forecast.shortageAt ? `První nepokrytá dávka: ${shortage}` : 'Datum vyčerpání nelze určit'}</Text>
+              <Text style={styles.shortage}>{forecast.shortageAt ? `První nepokrytá dávka: ${shortage}` : regimen?.endsOn ? `Vystačí do konce léčby (${formatCzechDate(regimen.endsOn)})` : 'Zásoba vystačí na dlouhou dobu'}</Text>
+              {medication.prescription && (tone === 'critical' || tone === 'warning') ? (
+                <Button label="Připravit žádost o eRecept" icon="document-text-outline" variant="ghost" onPress={() => router.push('/requests')} style={styles.rx} />
+              ) : null}
               <View style={styles.actions}>
                 <Button label={`Přidat balení (+${medication.packageSize})`} variant="secondary" icon="add-circle-outline" onPress={() => {
                   addStock(medication.id, medication.packageSize);
@@ -55,5 +60,5 @@ const styles = StyleSheet.create({
   medTop: { flexDirection: 'row', alignItems: 'center', gap: 12 }, medIcon: { width: 44, height: 44, borderRadius: 14, backgroundColor: colors.primarySoft, alignItems: 'center', justifyContent: 'center' },
   medBody: { flex: 1 }, medName: { color: colors.ink, fontSize: 18, fontWeight: '800' }, medStrength: { color: colors.muted, fontSize: 13, marginTop: 2 },
   stockRow: { flexDirection: 'row', alignItems: 'baseline', gap: 7, marginTop: 18 }, stockNumber: { color: colors.ink, fontSize: 30, fontWeight: '900' }, stockUnit: { color: colors.muted, fontSize: 14 },
-  shortage: { color: colors.muted, fontSize: 13, marginTop: 3 }, actions: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 16 }, refill: { flex: 1 },
+  shortage: { color: colors.muted, fontSize: 13, marginTop: 3 }, rx: { alignSelf: 'flex-start', paddingHorizontal: 0, marginTop: 4 }, actions: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 16 }, refill: { flex: 1 },
 });

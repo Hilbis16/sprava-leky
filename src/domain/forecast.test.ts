@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { forecastMedication, regimenChangeCorrectionQuantity, stockCorrectionQuantity } from './forecast';
+import { forecastMedication, regimenChangeCorrectionQuantity, stockAlertDates, stockCorrectionQuantity } from './forecast';
 import type { InventoryEvent, Medication, RegimenRule } from './types';
 
 const medication: Medication = {
@@ -72,5 +72,15 @@ describe('korekce zásoby', () => {
     const after = forecastMedication(medication, next, [event, { ...event, id: 'fix', kind: 'correction', quantity, occurredAt: now.toISOString() }], [], now);
     expect(before).toBe(69);
     expect(after.estimatedStock).toBe(before);
+  });
+});
+
+describe('stockAlertDates', () => {
+  it('vrátí budoucí upozornění 14 a 7 dní před vyčerpáním v 9:00', () => {
+    const now = new Date('2026-01-01T10:00:00');
+    const dates = stockAlertDates(new Date('2026-01-20T08:00:00').toISOString(), [14, 7], now);
+    expect(dates.map((date) => date.toString())).toEqual([new Date('2026-01-06T09:00:00').toString(), new Date('2026-01-13T09:00:00').toString()]);
+    expect(stockAlertDates(new Date('2026-01-10T08:00:00').toISOString(), [14, 7], now)).toHaveLength(1);
+    expect(stockAlertDates(null, [14, 7], now)).toEqual([]);
   });
 });

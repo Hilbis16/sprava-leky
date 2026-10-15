@@ -20,16 +20,16 @@ export interface FamilyInvite {
   role: InviteRole;
 }
 
-interface ProfileRow { id: string; display_name: string; timezone: string }
+interface ProfileRow { id: string; display_name: string; timezone: string; color: string | null }
 interface MembershipRow { id: string; profile_id: string; role: Membership['role'] }
 interface MedicationRow {
   id: string; profile_id: string; name: string; strength: string | null; package_size: number;
   unit: Medication['unit']; prescription: boolean; erecept_id: string | null; sukl_code: string | null;
-  active: boolean; created_at: string;
+  note: string | null; active: boolean; created_at: string;
 }
 interface RegimenRow {
   id: string; medication_id: string; effective_from: string; days_of_week: number[];
-  times: DoseTime[]; as_needed: boolean;
+  times: DoseTime[]; as_needed: boolean; ends_on: string | null;
 }
 interface InventoryRow {
   id: string; medication_id: string; kind: InventoryEvent['kind']; quantity: number;
@@ -39,7 +39,7 @@ interface DoseActionRow {
   id: string; occurrence_id: string; medication_id: string; profile_id: string;
   scheduled_at: string; amount: number; status: DoseAction['status']; recorded_at: string;
 }
-interface PrescriberRow { id: string; profile_id: string; name: string; phone: string | null; email: string | null }
+interface PrescriberRow { id: string; profile_id: string; kind: 'doctor' | 'pharmacy'; name: string; phone: string | null; email: string | null }
 interface RxRequestRow {
   id: string; profile_id: string; medication_id: string; status: RxRequest['status'];
   channel: RxRequest['channel']; message: string; created_at: string; sent_at: string | null;
@@ -75,7 +75,7 @@ export async function createFamilyInvite(profileId: string, role: InviteRole): P
 
 async function fetchFamilySnapshot(profileId: string): Promise<FamilySnapshot> {
   if (!supabase) throw new Error('Cloud není připojený.');
-  const profileResult = await supabase.from('care_profiles').select('id, display_name, timezone').eq('id', profileId).single();
+  const profileResult = await supabase.from('care_profiles').select('id, display_name, timezone, color').eq('id', profileId).single();
   if (profileResult.error) throw profileResult.error;
   const profileRow = profileResult.data as ProfileRow;
   const medicationResult = await supabase.from('medications').select('*').eq('profile_id', profileId);
@@ -106,19 +106,19 @@ async function fetchFamilySnapshot(profileId: string): Promise<FamilySnapshot> {
       id: profileRow.id,
       displayName: profileRow.display_name,
       initials: initialsFor(profileRow.display_name),
-      color: '#147D64',
+      color: profileRow.color ?? '#147D64',
       timezone: 'Europe/Prague',
     },
     memberships: memberships.map((row) => ({ id: row.id, profileId: row.profile_id, role: row.role, userName: 'Člen rodiny' })),
     medications: medicationRows.map((row) => ({
       id: row.id, profileId: row.profile_id, name: row.name, strength: row.strength ?? undefined,
       packageSize: Number(row.package_size), unit: row.unit, prescription: row.prescription,
-      ereceptId: row.erecept_id ?? undefined, suklCode: row.sukl_code ?? undefined,
+      ereceptId: row.erecept_id ?? undefined, suklCode: row.sukl_code ?? undefined, note: row.note ?? undefined,
       active: row.active, createdAt: row.created_at,
     })),
     regimens: regimens.map((row) => ({
       id: row.id, medicationId: row.medication_id, effectiveFrom: row.effective_from,
-      daysOfWeek: row.days_of_week, times: row.times, asNeeded: row.as_needed,
+      daysOfWeek: row.days_of_week, times: row.times, asNeeded: row.as_needed, endsOn: row.ends_on ?? undefined,
     })),
     inventoryEvents: inventory.map((row) => ({
       id: row.id, medicationId: row.medication_id, kind: row.kind, quantity: Number(row.quantity),
@@ -130,7 +130,7 @@ async function fetchFamilySnapshot(profileId: string): Promise<FamilySnapshot> {
       status: row.status, recordedAt: row.recorded_at, recordedBy: 'Člen rodiny',
     })),
     prescribers: prescribers.map((row) => ({
-      id: row.id, profileId: row.profile_id, name: row.name,
+      id: row.id, profileId: row.profile_id, kind: row.kind, name: row.name,
       phone: row.phone ?? undefined, email: row.email ?? undefined,
     })),
     rxRequests: requests.map((row) => ({

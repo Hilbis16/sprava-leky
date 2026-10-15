@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import { router } from 'expo-router';
 import React from 'react';
 import { Alert, Linking, Share, StyleSheet, Text, View } from 'react-native';
 
@@ -6,6 +7,7 @@ import { Screen } from '@/components/Screen';
 import { Button, Card, EmptyState, SectionTitle, StatusPill } from '@/components/ui';
 import { forecastMedication } from '@/domain/forecast';
 import { buildRxRequestMessage } from '@/domain/rxRequest';
+import { courseFinished } from '@/domain/schedule';
 import type { Medication } from '@/domain/types';
 import { useAppState } from '@/state/AppState';
 import { colors } from '@/theme';
@@ -16,8 +18,9 @@ export default function RequestsScreen() {
   const { data, saveRxRequest, updateRxRequestStatus } = useAppState();
   if (!data) return null;
   const profile = data.profiles.find((item) => item.id === data.currentProfileId)!;
-  const doctor = data.prescribers.find((item) => item.profileId === profile.id);
-  const prescriptionMeds = data.medications.filter((item) => item.profileId === profile.id && item.prescription && item.active);
+  const doctor = data.prescribers.find((item) => item.profileId === profile.id && (item.kind ?? 'doctor') === 'doctor');
+  const prescriptionMeds = data.medications.filter((item) => item.profileId === profile.id && item.prescription && item.active
+    && !courseFinished(data.regimens.find((regimen) => regimen.medicationId === item.id)));
   const requests = data.rxRequests.filter((item) => item.profileId === profile.id && item.status !== 'dismissed');
 
   const prepare = async (medication: Medication, channel: 'sms' | 'email' | 'share') => {
@@ -54,6 +57,12 @@ export default function RequestsScreen() {
         );
       })}
       <SectionTitle title="Připravit novou" />
+      {!doctor?.phone && !doctor?.email ? (
+        <Card style={styles.medCard}>
+          <View style={styles.medRow}><View style={styles.icon}><Ionicons name="person-add-outline" size={22} color={colors.primary} /></View><View style={styles.flex}><Text style={styles.medName}>Chybí kontakt na lékaře</Text><Text style={styles.medMeta}>S telefonem nebo e-mailem připravíte žádost jako SMS či e-mail. Jinak ji můžete jen sdílet.</Text></View></View>
+          <Button label="Doplnit kontakt" icon="create-outline" variant="secondary" onPress={() => router.push({ pathname: '/profile/[id]', params: { id: profile.id } })} style={styles.contactButton} />
+        </Card>
+      ) : null}
       {prescriptionMeds.map((medication) => {
         const regimen = data.regimens.find((item) => item.medicationId === medication.id);
         const forecast = forecastMedication(medication, regimen, data.inventoryEvents, data.doseActions);
@@ -79,5 +88,5 @@ const styles = StyleSheet.create({
   requestDate: { color: colors.muted, fontSize: 12, marginTop: 3 }, message: { color: colors.muted, fontSize: 13, lineHeight: 20, marginTop: 12 }, buttonRow: { flexDirection: 'row', marginTop: 14 },
   medCard: { marginBottom: 12 }, medRow: { flexDirection: 'row', alignItems: 'center', gap: 12 }, icon: { width: 44, height: 44, borderRadius: 14, backgroundColor: colors.primarySoft, alignItems: 'center', justifyContent: 'center' },
   flex: { flex: 1 }, medName: { color: colors.ink, fontSize: 16, fontWeight: '800' }, medMeta: { color: colors.muted, fontSize: 13, marginTop: 3 },
-  channelRow: { flexDirection: 'row', gap: 6, marginTop: 16 },
+  channelRow: { flexDirection: 'row', gap: 6, marginTop: 16 }, contactButton: { marginTop: 14 },
 });

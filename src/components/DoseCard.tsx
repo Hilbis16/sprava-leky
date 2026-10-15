@@ -30,6 +30,7 @@ export function DoseCard({ occurrence, medication, senior = false, onAction, onU
         </View>
         <Text style={[styles.name, senior && styles.nameSenior]}>{medication.name} {medication.strength}</Text>
         <Text style={[styles.amount, senior && styles.amountSenior]}>{unitLabel(occurrence.amount, medication.unit)}</Text>
+        {medication.note ? <View style={styles.note}><Ionicons name="information-circle-outline" size={senior ? 20 : 16} color={colors.warning} /><Text style={[styles.noteText, senior && styles.noteSenior]}>{medication.note}</Text></View> : null}
         {!done ? (
           <View style={[styles.actions, senior && styles.actionsSenior]}>
             <Button label="Užil/a jsem" icon="checkmark" onPress={() => onAction('taken')} style={styles.actionMain} />
@@ -51,5 +52,6 @@ const styles = StyleSheet.create({
   name: { color: colors.ink, fontSize: 18, fontWeight: '800', marginTop: 4 }, nameSenior: { fontSize: 24, lineHeight: 30 },
   amount: { color: colors.muted, fontSize: 14, marginTop: 3 }, amountSenior: { fontSize: 18, lineHeight: 26 },
   actions: { flexDirection: 'row', alignItems: 'center', marginTop: 14, gap: 4 }, actionsSenior: { marginTop: 20, flexDirection: 'column', alignItems: 'stretch' },
+  note: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 6 }, noteText: { flex: 1, color: colors.warning, fontSize: 13, fontWeight: '700' }, noteSenior: { fontSize: 17 },
   actionMain: { flex: 1 }, undo: { alignSelf: 'flex-start', marginTop: 8, paddingHorizontal: 0 },
 });

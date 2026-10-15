@@ -1,8 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Tabs } from 'expo-router';
+import { Redirect, Tabs } from 'expo-router';
 import React from 'react';
 import type { ColorValue } from 'react-native';
 
+import { useAppState } from '@/state/AppState';
 import { colors } from '@/theme';
 
 function TodayIcon({ color, size }: { color: ColorValue; size: number }) { return <Ionicons name="today-outline" color={color} size={size} />; }
@@ -11,6 +12,9 @@ function RequestsIcon({ color, size }: { color: ColorValue; size: number }) { re
 function FamilyIcon({ color, size }: { color: ColorValue; size: number }) { return <Ionicons name="people-outline" color={color} size={size} />; }
 
 export default function TabsLayout() {
+  // A device left in senior mode reopens there after a restart.
+  const { data } = useAppState();
+  if (data?.activeRole === 'senior') return <Redirect href="/senior" />;
   return (
     <Tabs screenOptions={{
       headerShown: false,

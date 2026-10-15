@@ -54,6 +54,9 @@ export async function syncPendingMutations(data: AppData): Promise<SyncResult> {
   for (const action of bootstrapped ? [] : data.doseActions) {
     bootstrapMutations.push({ id: `bootstrap-action-${action.id}`, entity: 'dose_action', payload: action, createdAt: action.recordedAt });
   }
+  for (const profile of bootstrapped ? [] : data.profiles) {
+    bootstrapMutations.push({ id: `bootstrap-profile-${profile.id}`, entity: 'profile', payload: profile, createdAt: new Date().toISOString() });
+  }
   for (const prescriber of bootstrapped ? [] : data.prescribers) {
     bootstrapMutations.push({ id: `bootstrap-prescriber-${prescriber.id}`, entity: 'prescriber', payload: prescriber, createdAt: new Date().toISOString() });
   }

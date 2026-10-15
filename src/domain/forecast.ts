@@ -108,6 +108,23 @@ export function regimenChangeCorrectionQuantity(
   return stockCorrectionQuantity(medication, next, inventoryEvents, doseActions, before, now);
 }
 
+/**
+ * Moments (09:00 local) when the stock is `thresholds` days from running out.
+ * Only future moments are returned; past ones are covered by in-app warnings.
+ */
+export function stockAlertDates(shortageAt: string | null, thresholds: number[], now = new Date()): Date[] {
+  if (!shortageAt) return [];
+  const shortageDay = startOfLocalDay(new Date(shortageAt));
+  return thresholds
+    .map((days) => {
+      const at = addLocalDays(shortageDay, -days);
+      at.setHours(9, 0, 0, 0);
+      return at;
+    })
+    .filter((at) => at > now)
+    .sort((left, right) => left.getTime() - right.getTime());
+}
+
 export function forecastTone(daysRemaining: number | null): 'safe' | 'warning' | 'critical' | 'unknown' {
   if (daysRemaining === null) return 'unknown';
   if (daysRemaining <= 7) return 'critical';

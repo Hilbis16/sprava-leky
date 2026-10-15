@@ -52,7 +52,7 @@ export function createDemoData(): AppData {
       },
       {
         id: magnesiumId, profileId: janaProfileId, name: 'Magnesium', strength: '375 mg',
-        packageSize: 60, unit: 'tablet', prescription: false, active: true, createdAt: isoAt(monthAgo, 8),
+        packageSize: 60, unit: 'tablet', prescription: false, note: 'Po jídle', active: true, createdAt: isoAt(monthAgo, 8),
       },
       {
         id: godasalId, profileId: karelProfileId, name: 'Godasal', strength: '100 mg',
@@ -89,7 +89,7 @@ export function createDemoData(): AppData {
     ],
     doseActions: [yesterdayAction],
     prescribers: [
-      { id: createId('prescriber'), profileId: janaProfileId, name: 'MUDr. Eva Veselá', phone: '+420777123456', email: 'ordinace@example.cz' },
+      { id: createId('prescriber'), profileId: janaProfileId, kind: 'doctor', name: 'MUDr. Eva Veselá', phone: '+420777123456', email: 'ordinace@example.cz' },
     ],
     rxRequests: [],
     pendingMutations: [],

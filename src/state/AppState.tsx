@@ -4,8 +4,10 @@ import { AppState as AppLifecycle } from 'react-native';
 import { regimenChangeCorrectionQuantity, stockCorrectionQuantity } from '@/domain/forecast';
 import { createId } from '@/domain/ids';
 import { applyMutation, type MedicationPayload } from '@/domain/mutations';
-import { localDateKey } from '@/domain/schedule';
-import type { AppData, DoseOccurrence, InventoryEvent, MedicineDraft, PendingMutation, RegimenRule, RxRequestStatus } from '@/domain/types';
+import { addLocalDays, localDateKey } from '@/domain/schedule';
+import type {
+  AppData, CareProfile, DoseOccurrence, InventoryEvent, MedicineDraft, PendingMutation, PrescriberContact, RegimenRule, RxRequestStatus,
+} from '@/domain/types';
 import { applySyncResult } from '@/data/applySync';
 import { acceptFamilyInvite as acceptCloudFamilyInvite } from '@/data/invites';
 import { loadAppData, resetAppData, saveAppData } from '@/data/localStore';
@@ -13,7 +15,7 @@ import { cloudEnabled } from '@/data/supabase';
 import { syncPendingMutations } from '@/data/sync';
 // Metro selects notifications.native.ts or notifications.web.ts.
 // eslint-disable-next-line import/no-unresolved
-import { cancelMedicationReminders, registerPushDevice, scheduleMedicationReminders } from '@/services/notifications';
+import { cancelMedicationReminders, registerPushDevice, scheduleMedicationReminders, scheduleStockAlerts } from '@/services/notifications';
 
 const SYNC_AFTER_CHANGE_MS = 3_000;
 const SYNC_RETRY_MS = 60_000;
@@ -29,6 +31,10 @@ interface AppStateValue {
   addMedicine: (draft: MedicineDraft) => Promise<string>;
   updateMedicine: (medicationId: string, draft: MedicineDraft) => void;
   deactivateMedicine: (medicationId: string) => void;
+  saveProfile: (input: { id?: string; displayName: string; color: string }) => string;
+  removeProfile: (profileId: string) => void;
+  saveContact: (input: Omit<PrescriberContact, 'id'> & { id?: string }) => void;
+  removeContact: (contactId: string) => void;
   addStock: (medicationId: string, quantity: number) => void;
   correctStock: (medicationId: string, countedStock: number) => void;
   saveRxRequest: (input: { medicationId: string; message: string; channel: 'sms' | 'email' | 'share' }) => string;
@@ -46,7 +52,11 @@ const mutation = (entity: PendingMutation['entity'], payload: unknown): PendingM
 
 const regimenTimes = (draft: MedicineDraft) => draft.times.map((time) => ({ ...time, id: createId('dose-time') }));
 
+const initialsFor = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2)
+  .map((part) => part[0]!.toLocaleUpperCase('cs-CZ')).join('') || '?';
+
 const sameSchedule = (regimen: RegimenRule | undefined, draft: MedicineDraft) => Boolean(regimen)
+  && (regimen!.endsOn ?? null) === (draft.endsOn ?? null)
   && JSON.stringify([...regimen!.daysOfWeek].sort()) === JSON.stringify([...draft.daysOfWeek].sort())
   && JSON.stringify(regimen!.times.map(({ time, amount, period }) => ({ time, amount, period })))
     === JSON.stringify(draft.times.map(({ time, amount, period }) => ({ time, amount, period })));
@@ -111,11 +121,11 @@ export function AppStateProvider({ children }: React.PropsWithChildren) {
       medication: {
         id: medicationId, profileId: draft.profileId, name: draft.name.trim(), strength: draft.strength?.trim() || undefined,
         packageSize: draft.packageSize, unit: draft.unit, prescription: draft.prescription,
-        ereceptId: draft.ereceptId, active: true, createdAt: new Date().toISOString(),
+        ereceptId: draft.ereceptId, note: draft.note?.trim() || undefined, active: true, createdAt: new Date().toISOString(),
       },
       regimen: {
         id: createId('regimen'), medicationId, effectiveFrom: localDateKey(new Date()), daysOfWeek: draft.daysOfWeek,
-        asNeeded: false, times: regimenTimes(draft),
+        asNeeded: false, times: regimenTimes(draft), endsOn: draft.endsOn,
       },
       inventory: { id: createId('inventory'), medicationId, kind: 'initial', quantity: draft.packageSize, occurredAt: new Date().toISOString() },
     };
@@ -131,7 +141,7 @@ export function AppStateProvider({ children }: React.PropsWithChildren) {
     const previous = current.regimens.find((item) => item.medicationId === medicationId);
     const nextMedication = {
       ...medication, name: draft.name.trim(), strength: draft.strength?.trim() || undefined, packageSize: draft.packageSize,
-      unit: draft.unit, prescription: draft.prescription, ereceptId: draft.ereceptId,
+      unit: draft.unit, prescription: draft.prescription, ereceptId: draft.ereceptId, note: draft.note?.trim() || undefined,
     };
     let regimen = previous;
     let inventory: InventoryEvent | undefined;
@@ -139,7 +149,7 @@ export function AppStateProvider({ children }: React.PropsWithChildren) {
       // A new schedule applies from today; a correction keeps today's stock estimate unchanged.
       regimen = {
         id: previous?.id ?? createId('regimen'), medicationId, effectiveFrom: localDateKey(new Date()),
-        daysOfWeek: draft.daysOfWeek, asNeeded: false, times: regimenTimes(draft),
+        daysOfWeek: draft.daysOfWeek, asNeeded: false, times: regimenTimes(draft), endsOn: draft.endsOn,
       };
       const quantity = regimenChangeCorrectionQuantity(medication, previous, regimen, current.inventoryEvents, current.doseActions);
       if (quantity !== 0) {
@@ -155,8 +165,41 @@ export function AppStateProvider({ children }: React.PropsWithChildren) {
     const medication = current?.medications.find((item) => item.id === medicationId);
     const regimen = current?.regimens.find((item) => item.medicationId === medicationId);
     if (!medication || !regimen) return;
-    commit(mutation('medication', { medication: { ...medication, active: false }, regimen } satisfies MedicationPayload));
+    // Ending the regimen yesterday keeps the past in the history without
+    // inventing missed doses afterwards; today's records stay as unscheduled.
+    const yesterday = localDateKey(addLocalDays(new Date(), -1));
+    const endsOn = regimen.endsOn && regimen.endsOn < yesterday ? regimen.endsOn : yesterday;
+    commit(mutation('medication', { medication: { ...medication, active: false }, regimen: { ...regimen, endsOn } } satisfies MedicationPayload));
     void cancelMedicationReminders(medicationId);
+  }, [commit]);
+
+  const saveProfile = useCallback((input: { id?: string; displayName: string; color: string }) => {
+    const existing = dataRef.current?.profiles.find((item) => item.id === input.id);
+    const displayName = input.displayName.trim();
+    const profile: CareProfile = {
+      id: existing?.id ?? createId('profile'), displayName, initials: initialsFor(displayName), color: input.color, timezone: 'Europe/Prague',
+    };
+    commit(mutation('profile', profile));
+    if (!existing) update((current) => ({ ...current, currentProfileId: profile.id }));
+    return profile.id;
+  }, [commit, update]);
+
+  const removeProfile = useCallback((profileId: string) => {
+    const current = dataRef.current;
+    if (!current || current.profiles.length <= 1) return;
+    current.medications.filter((item) => item.profileId === profileId).forEach((item) => void cancelMedicationReminders(item.id));
+    commit(mutation('profile_remove', { id: profileId }));
+  }, [commit]);
+
+  const saveContact = useCallback((input: Omit<PrescriberContact, 'id'> & { id?: string }) => {
+    commit(mutation('prescriber', {
+      ...input, id: input.id ?? createId('prescriber'), name: input.name.trim(),
+      phone: input.phone?.trim() || undefined, email: input.email?.trim() || undefined,
+    } satisfies PrescriberContact));
+  }, [commit]);
+
+  const removeContact = useCallback((contactId: string) => {
+    commit(mutation('prescriber_remove', { id: contactId }));
   }, [commit]);
 
   const addStock = useCallback((medicationId: string, quantity: number) => {
@@ -227,6 +270,13 @@ export function AppStateProvider({ children }: React.PropsWithChildren) {
     return () => { clearTimeout(soon); clearInterval(retry); };
   }, [pendingCount, syncNow]);
 
+  // Local reminders before a medicine runs out; recomputed after changes settle.
+  useEffect(() => {
+    if (!data) return;
+    const timer = setTimeout(() => void scheduleStockAlerts(data), 2_000);
+    return () => clearTimeout(timer);
+  }, [data]);
+
   const acceptFamilyInvite = useCallback(async (token: string) => {
     const current = dataRef.current;
     if (!current) throw new Error('Data aplikace ještě nejsou připravená.');
@@ -245,10 +295,10 @@ export function AppStateProvider({ children }: React.PropsWithChildren) {
 
   const value = useMemo<AppStateValue>(() => ({
     data, ready, syncMessage, setCurrentProfile, setActiveRole, recordDose, undoDose,
-    addMedicine, updateMedicine, deactivateMedicine, addStock, correctStock, saveRxRequest, updateRxRequestStatus,
+    addMedicine, updateMedicine, deactivateMedicine, saveProfile, removeProfile, saveContact, removeContact, addStock, correctStock, saveRxRequest, updateRxRequestStatus,
     syncNow, acceptFamilyInvite, resetDemo,
   }), [data, ready, syncMessage, setCurrentProfile, setActiveRole, recordDose, undoDose, addMedicine, updateMedicine,
-    deactivateMedicine, addStock, correctStock, saveRxRequest, updateRxRequestStatus, syncNow, acceptFamilyInvite, resetDemo]);
+    deactivateMedicine, saveProfile, removeProfile, saveContact, removeContact, addStock, correctStock, saveRxRequest, updateRxRequestStatus, syncNow, acceptFamilyInvite, resetDemo]);
 
   return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;
 }

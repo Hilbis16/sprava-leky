@@ -8,6 +8,7 @@ import { Screen } from '@/components/Screen';
 import { Button, Card, SectionTitle, StatusPill } from '@/components/ui';
 import { forecastMedication, forecastTone } from '@/domain/forecast';
 import type { InventoryEvent } from '@/domain/types';
+import { courseFinished, formatCzechDate } from '@/domain/schedule';
 import { daysLabel } from '@/domain/weekdays';
 import { useAppState } from '@/state/AppState';
 import { colors, radius } from '@/theme';
@@ -59,6 +60,8 @@ export default function MedicineDetailScreen() {
       <Card>
         <InfoRow icon="time-outline" label="Denní časy" value={doseLabel} />
         <InfoRow icon="calendar-outline" label="Dny" value={regimen ? daysLabel(regimen.daysOfWeek) : 'Bez rozpisu'} />
+        <InfoRow icon="hourglass-outline" label="Délka léčby" value={regimen?.endsOn ? `${courseFinished(regimen) ? 'Skončila' : 'Do'} ${formatCzechDate(regimen.endsOn)}` : 'Dlouhodobě'} />
+        {medication.note ? <InfoRow icon="information-circle-outline" label="Pokyny k užívání" value={medication.note} /> : null}
         <InfoRow icon="cube-outline" label="Velikost balení" value={`${medication.packageSize} kusů`} />
       </Card>
       <SectionTitle title="Historie zásoby" />
