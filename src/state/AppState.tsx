@@ -1,4 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { AppState as AppLifecycle } from 'react-native';
 
 import { regimenChangeCorrectionQuantity, stockCorrectionQuantity } from '@/domain/forecast';
 import { createId } from '@/domain/ids';
@@ -8,10 +9,14 @@ import type { AppData, DoseOccurrence, InventoryEvent, MedicineDraft, PendingMut
 import { applySyncResult } from '@/data/applySync';
 import { acceptFamilyInvite as acceptCloudFamilyInvite } from '@/data/invites';
 import { loadAppData, resetAppData, saveAppData } from '@/data/localStore';
+import { cloudEnabled } from '@/data/supabase';
 import { syncPendingMutations } from '@/data/sync';
 // Metro selects notifications.native.ts or notifications.web.ts.
 // eslint-disable-next-line import/no-unresolved
-import { cancelMedicationReminders, scheduleMedicationReminders } from '@/services/notifications';
+import { cancelMedicationReminders, registerPushDevice, scheduleMedicationReminders } from '@/services/notifications';
+
+const SYNC_AFTER_CHANGE_MS = 3_000;
+const SYNC_RETRY_MS = 60_000;
 
 interface AppStateValue {
   data: AppData | null;
@@ -203,6 +208,25 @@ export function AppStateProvider({ children }: React.PropsWithChildren) {
     }
   }, [update]);
 
+  const ready = Boolean(data);
+  useEffect(() => {
+    if (!cloudEnabled || !ready) return;
+    void syncNow();
+    void registerPushDevice();
+    const subscription = AppLifecycle.addEventListener('change', (state) => {
+      if (state === 'active') void syncNow();
+    });
+    return () => subscription.remove();
+  }, [ready, syncNow]);
+
+  const pendingCount = data?.pendingMutations.length ?? 0;
+  useEffect(() => {
+    if (!cloudEnabled || pendingCount === 0) return;
+    const soon = setTimeout(() => void syncNow(), SYNC_AFTER_CHANGE_MS);
+    const retry = setInterval(() => void syncNow(), SYNC_RETRY_MS);
+    return () => { clearTimeout(soon); clearInterval(retry); };
+  }, [pendingCount, syncNow]);
+
   const acceptFamilyInvite = useCallback(async (token: string) => {
     const current = dataRef.current;
     if (!current) throw new Error('Data aplikace ještě nejsou připravená.');
@@ -220,10 +244,10 @@ export function AppStateProvider({ children }: React.PropsWithChildren) {
   }, [replaceData]);
 
   const value = useMemo<AppStateValue>(() => ({
-    data, ready: Boolean(data), syncMessage, setCurrentProfile, setActiveRole, recordDose, undoDose,
+    data, ready, syncMessage, setCurrentProfile, setActiveRole, recordDose, undoDose,
     addMedicine, updateMedicine, deactivateMedicine, addStock, correctStock, saveRxRequest, updateRxRequestStatus,
     syncNow, acceptFamilyInvite, resetDemo,
-  }), [data, syncMessage, setCurrentProfile, setActiveRole, recordDose, undoDose, addMedicine, updateMedicine,
+  }), [data, ready, syncMessage, setCurrentProfile, setActiveRole, recordDose, undoDose, addMedicine, updateMedicine,
     deactivateMedicine, addStock, correctStock, saveRxRequest, updateRxRequestStatus, syncNow, acceptFamilyInvite, resetDemo]);
 
   return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;

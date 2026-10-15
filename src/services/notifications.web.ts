@@ -8,6 +8,10 @@ export async function scheduleMedicationReminders(_medication: Medication, _regi
   // Mobile builds schedule OS-level notifications. Web remains a preview target.
 }
 
+export async function registerPushDevice(): Promise<void> {
+  // Remote push is only delivered to mobile devices.
+}
+
 export async function cancelMedicationReminders(_medicationId: string): Promise<void> {
   // Nothing is scheduled on web.
 }

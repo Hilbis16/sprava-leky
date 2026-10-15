@@ -11,8 +11,10 @@ export function applySyncResult(current: AppData, sentMutationIds: ReadonlySet<s
   const recordedDuringSync = current.pendingMutations.filter((mutation) => !sentMutationIds.has(mutation.id));
   const pendingMutations = [...result.remaining, ...recordedDuringSync];
 
+  const cloudBootstrappedFor = result.bootstrappedFor ?? current.cloudBootstrappedFor;
+
   if (!result.data) {
-    return { ...current, pendingMutations, lastSyncedAt: result.syncedAt ?? current.lastSyncedAt };
+    return { ...current, pendingMutations, lastSyncedAt: result.syncedAt ?? current.lastSyncedAt, cloudBootstrappedFor };
   }
 
   const replayed = recordedDuringSync.reduce(applyMutation, result.data);
@@ -24,5 +26,6 @@ export function applySyncResult(current: AppData, sentMutationIds: ReadonlySet<s
     notificationPreferences: current.notificationPreferences,
     pendingMutations,
     lastSyncedAt: result.syncedAt ?? current.lastSyncedAt,
+    cloudBootstrappedFor,
   };
 }

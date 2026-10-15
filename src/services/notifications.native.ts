@@ -1,6 +1,8 @@
+import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
+import { cloudEnabled, ensureCloudSession, supabase } from '@/data/supabase';
 import type { Medication, RegimenRule } from '@/domain/types';
 
 Notifications.setNotificationHandler({
@@ -24,6 +26,26 @@ export async function requestNotificationPermission(): Promise<boolean> {
   const existing = await Notifications.getPermissionsAsync();
   const result = existing.granted ? existing : await Notifications.requestPermissionsAsync();
   return result.granted;
+}
+
+/**
+ * Registers this device for caregiver alerts sent by the push-notifications
+ * edge function. Needs the cloud and a real EAS project id in app.json.
+ */
+export async function registerPushDevice(): Promise<void> {
+  if (!cloudEnabled || !supabase) return;
+  const projectId: string | undefined = Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
+  if (!projectId || projectId.startsWith('REPLACE_')) return;
+  try {
+    if (!(await requestNotificationPermission())) return;
+    await ensureCloudSession();
+    const { data: token } = await Notifications.getExpoPushTokenAsync({ projectId });
+    const { error } = await supabase.rpc('register_push_device', { push_token: token, device_platform: Platform.OS });
+    if (error) throw error;
+  } catch (error) {
+    // Emulators have no push token; local reminders keep working without it.
+    console.warn('Zařízení se nepodařilo zaregistrovat pro upozornění.', error);
+  }
 }
 
 export async function cancelMedicationReminders(medicationId: string): Promise<void> {

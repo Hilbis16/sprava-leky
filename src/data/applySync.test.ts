@@ -49,5 +49,15 @@ describe('applySyncResult', () => {
     const next = applySyncResult(current, new Set(['failed']), { synced: false, remaining: [failed], message: 'offline' });
 
     expect(next.pendingMutations).toEqual([failed]);
+    expect(next.cloudBootstrappedFor).toBeUndefined();
+  });
+
+  it('si zapamatuje, pro kterého uživatele už byla nahrána celá historie', () => {
+    const snapshot = createDemoData();
+    const next = applySyncResult(snapshot, new Set(), {
+      synced: true, remaining: [], syncedAt: '2026-10-15T06:02:00.000Z', message: 'ok',
+      data: { ...snapshot, cloudBootstrappedFor: undefined }, bootstrappedFor: 'user-1',
+    });
+    expect(next.cloudBootstrappedFor).toBe('user-1');
   });
 });

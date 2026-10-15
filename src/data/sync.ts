@@ -8,6 +8,8 @@ export interface SyncResult {
   syncedAt?: string;
   message: string;
   data?: AppData;
+  /** Set once the full local history has been uploaded for this cloud user. */
+  bootstrappedFor?: string;
 }
 
 export async function syncPendingMutations(data: AppData): Promise<SyncResult> {
@@ -18,13 +20,17 @@ export async function syncPendingMutations(data: AppData): Promise<SyncResult> {
     return { synced: false, remaining: data.pendingMutations, message: 'Zařízení je offline' };
   }
 
+  let userId: string;
   try {
-    await ensureCloudSession();
+    userId = (await ensureCloudSession()).user.id;
   } catch (error) {
     return { synced: false, remaining: data.pendingMutations, message: error instanceof Error ? error.message : 'Přihlášení selhalo' };
   }
 
-  for (const profile of data.profiles) {
+  // The first sync for a cloud user uploads the whole local history; after that
+  // only queued mutations are sent, so routine syncs stay small.
+  const bootstrapped = data.cloudBootstrappedFor === userId;
+  for (const profile of bootstrapped ? [] : data.profiles) {
     const { error } = await supabase.rpc('bootstrap_family_profile', {
       requested_id: profile.id,
       requested_name: profile.displayName,
@@ -33,7 +39,7 @@ export async function syncPendingMutations(data: AppData): Promise<SyncResult> {
   }
 
   const bootstrapMutations: AppData['pendingMutations'] = [];
-  for (const medication of data.medications) {
+  for (const medication of bootstrapped ? [] : data.medications) {
     const regimen = data.regimens.find((item) => item.medicationId === medication.id);
     const inventory = data.inventoryEvents.find((item) => item.medicationId === medication.id);
     if (regimen && inventory) {
@@ -45,10 +51,10 @@ export async function syncPendingMutations(data: AppData): Promise<SyncResult> {
       });
     }
   }
-  for (const action of data.doseActions) {
+  for (const action of bootstrapped ? [] : data.doseActions) {
     bootstrapMutations.push({ id: `bootstrap-action-${action.id}`, entity: 'dose_action', payload: action, createdAt: action.recordedAt });
   }
-  for (const prescriber of data.prescribers) {
+  for (const prescriber of bootstrapped ? [] : data.prescribers) {
     bootstrapMutations.push({ id: `bootstrap-prescriber-${prescriber.id}`, entity: 'prescriber', payload: prescriber, createdAt: new Date().toISOString() });
   }
   const queued = new Map(bootstrapMutations.map((mutation) => [mutation.id, mutation]));
@@ -73,6 +79,7 @@ export async function syncPendingMutations(data: AppData): Promise<SyncResult> {
         synced: true,
         remaining: [],
         syncedAt,
+        bootstrappedFor: userId,
         message: `Změny byly odeslány, ale stažení rodinných dat selhalo: ${error instanceof Error ? error.message : 'neznámá chyba'}`,
       };
     }
@@ -83,5 +90,6 @@ export async function syncPendingMutations(data: AppData): Promise<SyncResult> {
     syncedAt,
     message: failed.length ? `${failed.length} změn čeká na další pokus` : 'Všechny změny jsou synchronizované',
     data: pulledData,
+    bootstrappedFor: failed.length ? undefined : userId,
   };
 }

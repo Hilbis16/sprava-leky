@@ -1,28 +1,50 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
-const corsHeaders = { 'Content-Type': 'application/json' };
+const jsonHeaders = { 'Content-Type': 'application/json' };
+const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: jsonHeaders });
 
+interface ExpoTicket { status: 'ok' | 'error'; details?: { error?: string } }
+
+// Runs from cron (see README). Claims doses that stayed unconfirmed and sends
+// one generic push per affected profile to its owners and caregivers. The text
+// names neither the medicine nor the person: it is shown on a lock screen.
 Deno.serve(async (request) => {
   const secret = request.headers.get('x-cron-secret');
-  if (!secret || secret !== Deno.env.get('CRON_SECRET')) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: corsHeaders });
-  const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
-  const { data: devices, error } = await supabase.from('devices').select('expo_push_token');
-  if (error) return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: corsHeaders });
+  if (!secret || secret !== Deno.env.get('CRON_SECRET')) return json({ error: 'Unauthorized' }, 401);
 
-  // Production rule evaluation belongs in a database function. This endpoint is
-  // intentionally generic and sends no medicine name in lock-screen content.
-  const messages = (devices ?? []).map((device) => ({
-    to: device.expo_push_token,
+  const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+  const delayMinutes = Number(Deno.env.get('MISSED_DOSE_DELAY_MINUTES') ?? 120);
+
+  const { data: alerts, error: claimError } = await supabase.rpc('claim_missed_dose_alerts', { delay_minutes: delayMinutes });
+  if (claimError) return json({ error: claimError.message }, 500);
+  const profileIds = [...new Set(((alerts ?? []) as { profile_id: string }[]).map((alert) => alert.profile_id))];
+  if (!profileIds.length) return json({ alerts: 0, sent: 0 });
+
+  const { data: tokens, error: tokenError } = await supabase.rpc('caregiver_push_tokens', { target_profiles: profileIds });
+  if (tokenError) return json({ error: tokenError.message }, 500);
+
+  const messages = ((tokens ?? []) as { profile_id: string; expo_push_token: string }[]).map((row) => ({
+    to: row.expo_push_token,
     sound: 'default',
+    channelId: 'medicine-reminders',
     title: 'Moje léky',
-    body: 'V aplikaci je nové upozornění, které vyžaduje vaši pozornost.',
-    data: { route: '/(tabs)' },
+    body: 'Některá dávka zůstala nepotvrzená. Otevřete aplikaci a zkontrolujte dnešní plán.',
+    data: { route: '/(tabs)', profileId: row.profile_id },
   }));
-  if (!messages.length) return new Response(JSON.stringify({ sent: 0 }), { headers: corsHeaders });
+  if (!messages.length) return json({ alerts: alerts!.length, sent: 0 });
+
   const response = await fetch('https://exp.host/--/api/v2/push/send', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${Deno.env.get('EXPO_ACCESS_TOKEN')}` },
+    headers: { ...jsonHeaders, Authorization: `Bearer ${Deno.env.get('EXPO_ACCESS_TOKEN')}` },
     body: JSON.stringify(messages),
   });
-  return new Response(JSON.stringify({ sent: messages.length, result: await response.json() }), { headers: corsHeaders });
+  const result = await response.json() as { data?: ExpoTicket[] };
+
+  // Tickets come back in message order; forget devices Expo reports as gone.
+  const stale = (result.data ?? [])
+    .map((ticket, index) => ticket.details?.error === 'DeviceNotRegistered' ? messages[index]!.to : null)
+    .filter((token): token is string => Boolean(token));
+  if (stale.length) await supabase.from('devices').delete().in('expo_push_token', stale);
+
+  return json({ alerts: alerts!.length, sent: messages.length, removedDevices: stale.length });
 });

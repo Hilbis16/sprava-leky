@@ -130,6 +130,8 @@ export interface AppData {
   pendingMutations: PendingMutation[];
   notificationPreferences: NotificationPreferences;
   lastSyncedAt?: string;
+  /** Cloud user this device has already uploaded its full local history for. */
+  cloudBootstrappedFor?: string;
 }
 
 export interface ForecastResult {

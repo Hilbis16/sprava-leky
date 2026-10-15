@@ -73,7 +73,7 @@ export default function FamilyScreen() {
       </Card>
       <SectionTitle title="Nastavení pilotu" />
       <Card>
-        <View style={styles.settingRow}><Ionicons name="notifications-outline" size={24} color={colors.primary} /><View style={styles.flex}><Text style={styles.settingTitle}>Upozornění na nepotvrzenou dávku</Text><Text style={styles.settingBody}>Pečujícímu po {data.notificationPreferences.missedDoseDelayMinutes / 60} hodinách</Text></View></View>
+        <View style={styles.settingRow}><Ionicons name="notifications-outline" size={24} color={colors.primary} /><View style={styles.flex}><Text style={styles.settingTitle}>Upozornění na nepotvrzenou dávku</Text><Text style={styles.settingBody}>{cloudEnabled ? `Pečujícím po ${data.notificationPreferences.missedDoseDelayMinutes / 60} hodinách, bez názvu léku` : 'Funguje po připojení EU cloudu'}</Text></View></View>
         <View style={styles.divider} />
         <View style={styles.settingRow}><Ionicons name="lock-closed-outline" size={24} color={colors.primary} /><View style={styles.flex}><Text style={styles.settingTitle}>Soukromí</Text><Text style={styles.settingBody}>Fotografie pro OCR zůstávají v zařízení.</Text></View></View>
       </Card>
