@@ -11,11 +11,12 @@ const unitLabel = (amount: number, unit: Medication['unit']) => {
   return amount === 0.5 ? '½ tablety' : amount === 1 ? '1 tableta' : `${amount} tablety`;
 };
 
-export function DoseCard({ occurrence, medication, senior = false, onAction }: {
+export function DoseCard({ occurrence, medication, senior = false, onAction, onUndo }: {
   occurrence: DoseOccurrence;
   medication: Medication;
   senior?: boolean;
   onAction: (status: 'taken' | 'skipped') => void;
+  onUndo?: () => void;
 }) {
   const time = new Intl.DateTimeFormat('cs-CZ', { hour: '2-digit', minute: '2-digit' }).format(new Date(occurrence.scheduledAt));
   const done = occurrence.status !== 'unconfirmed';
@@ -34,6 +35,8 @@ export function DoseCard({ occurrence, medication, senior = false, onAction }: {
             <Button label="Užil/a jsem" icon="checkmark" onPress={() => onAction('taken')} style={styles.actionMain} />
             <Button label="Neužil/a" variant="ghost" onPress={() => onAction('skipped')} />
           </View>
+        ) : onUndo ? (
+          <Button label="Opravit záznam" icon="arrow-undo-outline" variant="ghost" onPress={onUndo} style={styles.undo} accessibilityLabel={`Opravit záznam dávky ${medication.name}`} />
         ) : null}
       </View>
     </Card>
@@ -48,5 +51,5 @@ const styles = StyleSheet.create({
   name: { color: colors.ink, fontSize: 18, fontWeight: '800', marginTop: 4 }, nameSenior: { fontSize: 24, lineHeight: 30 },
   amount: { color: colors.muted, fontSize: 14, marginTop: 3 }, amountSenior: { fontSize: 18, lineHeight: 26 },
   actions: { flexDirection: 'row', alignItems: 'center', marginTop: 14, gap: 4 }, actionsSenior: { marginTop: 20, flexDirection: 'column', alignItems: 'stretch' },
-  actionMain: { flex: 1 },
+  actionMain: { flex: 1 }, undo: { alignSelf: 'flex-start', marginTop: 8, paddingHorizontal: 0 },
 });

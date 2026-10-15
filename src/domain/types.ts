@@ -105,7 +105,7 @@ export interface RxRequest {
 
 export interface PendingMutation {
   id: string;
-  entity: 'dose_action' | 'inventory_event' | 'medication' | 'prescriber' | 'rx_request';
+  entity: 'dose_action' | 'dose_action_undo' | 'inventory_event' | 'medication' | 'prescriber' | 'rx_request';
   payload: unknown;
   createdAt: string;
 }

@@ -79,6 +79,35 @@ export function forecastMedication(
   };
 }
 
+/** Quantity of a correction event that makes the estimated stock equal to a counted amount. */
+export function stockCorrectionQuantity(
+  medication: Medication,
+  regimen: RegimenRule | undefined,
+  inventoryEvents: InventoryEvent[],
+  doseActions: DoseAction[],
+  countedStock: number,
+  now = new Date(),
+): number {
+  const { estimatedStock } = forecastMedication(medication, regimen, inventoryEvents, doseActions, now);
+  return roundQuantity(countedStock - estimatedStock);
+}
+
+/**
+ * A changed regimen starts today, so past doses of the old schedule would stop
+ * being counted. The returned correction keeps today's estimated stock unchanged.
+ */
+export function regimenChangeCorrectionQuantity(
+  medication: Medication,
+  previous: RegimenRule | undefined,
+  next: RegimenRule,
+  inventoryEvents: InventoryEvent[],
+  doseActions: DoseAction[],
+  now = new Date(),
+): number {
+  const before = forecastMedication(medication, previous, inventoryEvents, doseActions, now).estimatedStock;
+  return stockCorrectionQuantity(medication, next, inventoryEvents, doseActions, before, now);
+}
+
 export function forecastTone(daysRemaining: number | null): 'safe' | 'warning' | 'critical' | 'unknown' {
   if (daysRemaining === null) return 'unknown';
   if (daysRemaining <= 7) return 'critical';

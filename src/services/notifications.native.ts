@@ -26,17 +26,27 @@ export async function requestNotificationPermission(): Promise<boolean> {
   return result.granted;
 }
 
+export async function cancelMedicationReminders(medicationId: string): Promise<void> {
+  const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+  await Promise.all(scheduled
+    .filter((request) => request.content.data?.medicationId === medicationId)
+    .map((request) => Notifications.cancelScheduledNotificationAsync(request.identifier)));
+}
+
 export async function scheduleMedicationReminders(medication: Medication, regimen: RegimenRule): Promise<void> {
+  await cancelMedicationReminders(medication.id);
+  if (!medication.active || regimen.asNeeded) return;
   const allowed = await requestNotificationPermission();
-  if (!allowed || regimen.asNeeded) return;
+  if (!allowed) return;
 
   for (const dose of regimen.times) {
     const [hour = 8, minute = 0] = dose.time.split(':').map(Number);
     for (const day of regimen.daysOfWeek) {
       await Notifications.scheduleNotificationAsync({
         content: {
-          title: 'Je čas na léky',
-          body: `Zkontrolujte dnešní dávku: ${medication.name}`,
+          // The lock screen is visible to anyone nearby, so the text never names the medicine.
+          title: 'Moje léky',
+          body: 'Je čas na léky. Otevřete aplikaci a potvrďte dávku.',
           data: { medicationId: medication.id },
         },
         trigger: {

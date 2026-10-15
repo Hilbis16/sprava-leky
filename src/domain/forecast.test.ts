@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { forecastMedication } from './forecast';
+import { forecastMedication, regimenChangeCorrectionQuantity, stockCorrectionQuantity } from './forecast';
 import type { InventoryEvent, Medication, RegimenRule } from './types';
 
 const medication: Medication = {
@@ -52,5 +52,25 @@ describe('forecastMedication', () => {
     const result = forecastMedication(medication, { ...daily, asNeeded: true }, [event], [], new Date('2026-01-01T07:00:00'));
     expect(result.daysRemaining).toBeNull();
     expect(result.shortageAt).toBeNull();
+  });
+});
+
+describe('korekce zásoby', () => {
+  it('dorovná odhad na spočítaný počet kusů', () => {
+    const now = new Date('2026-01-01T21:00:00');
+    const quantity = stockCorrectionQuantity(medication, daily, [event], [], 80, now);
+    expect(quantity).toBe(-8);
+    const corrected = forecastMedication(medication, daily, [event, { ...event, id: 'fix', kind: 'correction', quantity, occurredAt: now.toISOString() }], [], now);
+    expect(corrected.estimatedStock).toBe(80);
+  });
+
+  it('při změně rozpisu zachová dnešní zásobu', () => {
+    const now = new Date('2026-01-11T12:00:00');
+    const before = forecastMedication(medication, daily, [event], [], now).estimatedStock;
+    const next: RegimenRule = { ...daily, effectiveFrom: '2026-01-11', times: [{ id: 'noon', time: '13:00', amount: 2, period: 'afternoon' }] };
+    const quantity = regimenChangeCorrectionQuantity(medication, daily, next, [event], [], now);
+    const after = forecastMedication(medication, next, [event, { ...event, id: 'fix', kind: 'correction', quantity, occurredAt: now.toISOString() }], [], now);
+    expect(before).toBe(69);
+    expect(after.estimatedStock).toBe(before);
   });
 });

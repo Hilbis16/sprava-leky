@@ -11,7 +11,7 @@ import { useAppState } from '@/state/AppState';
 import { colors } from '@/theme';
 
 export default function SeniorScreen() {
-  const { data, recordDose, setActiveRole } = useAppState();
+  const { data, recordDose, undoDose, setActiveRole } = useAppState();
   if (!data) return null;
   const profile = data.profiles.find((item) => item.id === data.currentProfileId)!;
   const occurrences = todayOccurrences(data.medications, data.regimens, data.doseActions, profile.id);
@@ -29,7 +29,7 @@ export default function SeniorScreen() {
       <View style={styles.content}>
         {occurrences.length === 0 ? <EmptyState icon="sunny-outline" title="Dnes máte volno" body="Na dnešek nejsou naplánované žádné léky." /> : occurrences.map((occurrence) => {
           const medication = data.medications.find((item) => item.id === occurrence.medicationId)!;
-          return <DoseCard key={occurrence.id} occurrence={occurrence} medication={medication} senior onAction={(status) => recordDose(occurrence, status)} />;
+          return <DoseCard key={occurrence.id} occurrence={occurrence} medication={medication} senior onAction={(status) => recordDose(occurrence, status)} onUndo={() => undoDose(occurrence)} />;
         })}
       </View>
       <Text style={styles.help}>Potřebujete pomoc? Zavolejte svému pečujícímu.</Text>

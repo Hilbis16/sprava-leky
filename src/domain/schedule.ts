@@ -21,6 +21,16 @@ export function scheduledDate(date: Date, time: string): Date {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate(), hours, minutes, 0, 0);
 }
 
+/** Accepts "8:00", "08.00" or "0800" and returns "08:00"; null for an invalid time. */
+export function normalizeTime(raw: string): string | null {
+  const match = raw.trim().match(/^(\d{1,2})[:.]?(\d{2})$/);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (hours > 23 || minutes > 59) return null;
+  return `${pad(hours)}:${pad(minutes)}`;
+}
+
 export function occurrenceId(medicationId: string, scheduledAt: Date): string {
   return `${medicationId}:${scheduledAt.toISOString()}`;
 }

@@ -1,13 +1,15 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router, Stack, useLocalSearchParams } from 'expo-router';
 import React, { useMemo, useState } from 'react';
 import { Alert, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 
 import { Screen } from '@/components/Screen';
 import { Button, Card } from '@/components/ui';
-import { normalizeEreceptId } from '@/domain/erecept';
+import { formatEreceptId, normalizeEreceptId } from '@/domain/erecept';
+import { normalizeTime } from '@/domain/schedule';
 import type { DayPeriod, DoseUnit } from '@/domain/types';
+import { daysLabel, everyDay, weekDays } from '@/domain/weekdays';
 // Metro selects ocr.native.ts or ocr.web.ts for the target platform.
 // eslint-disable-next-line import/no-unresolved
 import { recognizeMedicineBox } from '@/services/ocr';
@@ -16,25 +18,38 @@ import { colors, radius } from '@/theme';
 
 const periodDefaults: Record<DayPeriod, string> = { morning: '08:00', afternoon: '14:00', evening: '20:00' };
 const periodLabels: Record<DayPeriod, string> = { morning: 'Ráno', afternoon: 'Odpoledne', evening: 'Večer' };
+const allPeriods: DayPeriod[] = ['morning', 'afternoon', 'evening'];
+
+type PeriodState = { enabled: boolean; amount: number; time: string };
 
 export default function AddMedicineScreen() {
-  const params = useLocalSearchParams<{ ereceptId?: string }>();
-  const { data, addMedicine } = useAppState();
+  const params = useLocalSearchParams<{ ereceptId?: string; id?: string }>();
+  const { data, addMedicine, updateMedicine } = useAppState();
+  const editing = params.id ? data?.medications.find((item) => item.id === params.id) : undefined;
+  const editingRegimen = editing ? data?.regimens.find((item) => item.medicationId === editing.id) : undefined;
   const [step, setStep] = useState(1);
-  const [name, setName] = useState('');
-  const [strength, setStrength] = useState('');
-  const [packageSize, setPackageSize] = useState('30');
-  const [unit, setUnit] = useState<DoseUnit>('tablet');
-  const [prescription, setPrescription] = useState(Boolean(params.ereceptId));
-  const [ereceptId, setEreceptId] = useState(normalizeEreceptId(params.ereceptId ?? '') ?? '');
-  const [daysMode, setDaysMode] = useState<'daily' | 'mwf'>('daily');
-  const [periods, setPeriods] = useState<Record<DayPeriod, { enabled: boolean; amount: number }>>({
-    morning: { enabled: true, amount: 1 }, afternoon: { enabled: false, amount: 1 }, evening: { enabled: false, amount: 1 },
-  });
+  const [name, setName] = useState(editing?.name ?? '');
+  const [strength, setStrength] = useState(editing?.strength ?? '');
+  const [packageSize, setPackageSize] = useState(String(editing?.packageSize ?? 30));
+  const [unit, setUnit] = useState<DoseUnit>(editing?.unit ?? 'tablet');
+  const [prescription, setPrescription] = useState(editing?.prescription ?? Boolean(params.ereceptId));
+  const [ereceptId, setEreceptId] = useState(editing?.ereceptId ? formatEreceptId(editing.ereceptId) : normalizeEreceptId(params.ereceptId ?? '') ?? '');
+  const [days, setDays] = useState<number[]>(editingRegimen?.daysOfWeek ?? everyDay);
+  const [periods, setPeriods] = useState<Record<DayPeriod, PeriodState>>(() => Object.fromEntries(allPeriods.map((period) => {
+    const existing = editingRegimen?.times.find((item) => item.period === period);
+    return [period, existing
+      ? { enabled: true, amount: existing.amount, time: existing.time }
+      : { enabled: !editingRegimen && period === 'morning', amount: 1, time: periodDefaults[period] }];
+  })) as Record<DayPeriod, PeriodState>);
   const [ocrBusy, setOcrBusy] = useState(false);
-  const profile = data?.profiles.find((item) => item.id === data.currentProfileId);
-  const times = useMemo(() => (Object.keys(periods) as DayPeriod[]).filter((key) => periods[key].enabled).map((key) => ({ period: key, time: periodDefaults[key], amount: periods[key].amount })), [periods]);
+  const profile = data?.profiles.find((item) => item.id === (editing?.profileId ?? data.currentProfileId));
+  const times = useMemo(() => allPeriods.filter((key) => periods[key].enabled)
+    .map((key) => ({ period: key, time: normalizeTime(periods[key].time) ?? periods[key].time, amount: periods[key].amount }))
+    .sort((left, right) => left.time.localeCompare(right.time)), [periods]);
   if (!data || !profile) return null;
+  const setPeriod = (period: DayPeriod, change: Partial<PeriodState>) =>
+    setPeriods((current) => ({ ...current, [period]: { ...current[period], ...change } }));
+  const toggleDay = (day: number) => setDays((current) => current.includes(day) ? current.filter((item) => item !== day) : [...current, day].sort());
 
   const captureBox = async () => {
     try {
@@ -56,25 +71,34 @@ export default function AddMedicineScreen() {
   const next = () => {
     if (step === 1 && !name.trim()) return Alert.alert('Doplňte název', 'Název léku je povinný.');
     if (step === 2 && (!Number(packageSize) || Number(packageSize) <= 0 || times.length === 0)) return Alert.alert('Zkontrolujte údaje', 'Zadejte počet kusů a vyberte alespoň jednu denní dávku.');
+    if (step === 2 && days.length === 0) return Alert.alert('Vyberte dny', 'Lék musí mít alespoň jeden den v týdnu.');
+    if (step === 2 && times.some((time) => !normalizeTime(time.time))) return Alert.alert('Neplatný čas', 'Čas zadejte ve tvaru 08:00.');
+    if (step === 2 && new Set(times.map((time) => time.time)).size !== times.length) return Alert.alert('Stejný čas', 'Dvě dávky nemohou mít stejný čas.');
     setStep((value) => Math.min(3, value + 1));
   };
 
   const save = async () => {
-    const id = await addMedicine({
+    const draft = {
       profileId: profile.id, name, strength, packageSize: Number(packageSize), unit, prescription,
-      ereceptId: normalizeEreceptId(ereceptId) ?? undefined,
-      times, daysOfWeek: daysMode === 'daily' ? [0, 1, 2, 3, 4, 5, 6] : [1, 3, 5],
-    });
+      ereceptId: normalizeEreceptId(ereceptId) ?? undefined, times, daysOfWeek: days,
+    };
+    if (editing) {
+      updateMedicine(editing.id, draft);
+      router.back();
+      return;
+    }
+    const id = await addMedicine(draft);
     router.replace(`/medicine/${id}`);
   };
 
   return (
     <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <Screen>
+        <Stack.Screen options={{ title: editing ? 'Upravit lék' : 'Přidat lék' }} />
         <View style={styles.progressRow}>{[1, 2, 3].map((item) => <View key={item} style={[styles.progressDot, item <= step && styles.progressDotActive]} />)}</View>
         <Text style={styles.kicker}>KROK {step} ZE 3</Text>
         {step === 1 ? <>
-          <Text style={styles.title}>Který lék přidáváte?</Text><Text style={styles.lead}>Foto údaje pouze předvyplní. Uloží se až po vaší kontrole.</Text>
+          <Text style={styles.title}>{editing ? 'Údaje o léku' : 'Který lék přidáváte?'}</Text><Text style={styles.lead}>Foto údaje pouze předvyplní. Uloží se až po vaší kontrole.</Text>
           <View style={styles.captureRow}>
             <Button label={ocrBusy ? 'Rozpoznávám…' : 'Vyfotit krabičku'} icon="camera-outline" onPress={() => void captureBox()} disabled={ocrBusy} style={styles.capture} />
             <Button label="QR eRecept" icon="qr-code-outline" variant="secondary" onPress={() => router.push('/scanner')} style={styles.capture} />
@@ -87,36 +111,60 @@ export default function AddMedicineScreen() {
         {step === 2 ? <>
           <Text style={styles.title}>Balení a dávkování</Text><Text style={styles.lead}>Každý lék má vlastní počet kusů a vlastní rozvrh.</Text>
           <Field label="Počet kusů v balení" value={packageSize} onChangeText={setPackageSize} keyboardType="decimal-pad" placeholder="30" />
+          {editing ? <Text style={styles.hint}>Změna velikosti balení neovlivní současnou zásobu. Projeví se při dalším doplnění.</Text> : null}
           <Text style={styles.label}>Jednotka</Text>
           <View style={styles.segment}><Choice label="Tablety" selected={unit === 'tablet'} onPress={() => setUnit('tablet')} /><Choice label="Kapsle" selected={unit === 'capsule'} onPress={() => setUnit('capsule')} /></View>
           <View style={styles.switchRow}><View><Text style={styles.labelNoMargin}>Lék na předpis</Text><Text style={styles.small}>Umožní připravit žádost lékaři</Text></View><Switch value={prescription} onValueChange={setPrescription} trackColor={{ true: colors.primary }} /></View>
           <Text style={styles.label}>Které dny?</Text>
-          <View style={styles.segment}><Choice label="Každý den" selected={daysMode === 'daily'} onPress={() => setDaysMode('daily')} /><Choice label="Po · St · Pá" selected={daysMode === 'mwf'} onPress={() => setDaysMode('mwf')} /></View>
-          <Text style={styles.label}>Denní dávky</Text>
-          {(Object.keys(periods) as DayPeriod[]).map((period) => (
-            <Card key={period} style={[styles.periodCard, periods[period].enabled && styles.periodCardActive]}>
-              <Pressable style={styles.periodToggle} onPress={() => setPeriods((current) => ({ ...current, [period]: { ...current[period], enabled: !current[period].enabled } }))}>
-                <Ionicons name={periods[period].enabled ? 'checkmark-circle' : 'ellipse-outline'} size={26} color={periods[period].enabled ? colors.primary : colors.muted} />
-                <View style={styles.flex}><Text style={styles.periodName}>{periodLabels[period]}</Text><Text style={styles.small}>{periodDefaults[period]}</Text></View>
+          <View style={styles.dayRow}>
+            {weekDays.map((item) => (
+              <Pressable key={item.day} onPress={() => toggleDay(item.day)} style={[styles.day, days.includes(item.day) && styles.dayActive]}
+                accessibilityRole="checkbox" accessibilityState={{ checked: days.includes(item.day) }} accessibilityLabel={item.long}>
+                <Text style={[styles.dayText, days.includes(item.day) && styles.dayTextActive]}>{item.short}</Text>
               </Pressable>
-              {periods[period].enabled ? <View style={styles.amountRow}><Text style={styles.small}>Množství</Text><Button label="−" variant="ghost" onPress={() => setPeriods((current) => ({ ...current, [period]: { ...current[period], amount: Math.max(unit === 'tablet' ? 0.5 : 1, current[period].amount - (unit === 'tablet' ? 0.5 : 1)) } }))} /><Text style={styles.amount}>{periods[period].amount}</Text><Button label="+" variant="ghost" onPress={() => setPeriods((current) => ({ ...current, [period]: { ...current[period], amount: current[period].amount + (unit === 'tablet' ? 0.5 : 1) } }))} /></View> : null}
-            </Card>
-          ))}
+            ))}
+          </View>
+          {days.length !== 7 ? <Pressable onPress={() => setDays(everyDay)}><Text style={styles.link}>Vybrat každý den</Text></Pressable> : null}
+          <Text style={styles.label}>Denní dávky</Text>
+          {allPeriods.map((period) => {
+            const state = periods[period];
+            const amountStep = unit === 'tablet' ? 0.5 : 1;
+            const timeValid = Boolean(normalizeTime(state.time));
+            return (
+              <Card key={period} style={[styles.periodCard, state.enabled && styles.periodCardActive]}>
+                <Pressable style={styles.periodToggle} onPress={() => setPeriod(period, { enabled: !state.enabled })}
+                  accessibilityRole="checkbox" accessibilityState={{ checked: state.enabled }}>
+                  <Ionicons name={state.enabled ? 'checkmark-circle' : 'ellipse-outline'} size={26} color={state.enabled ? colors.primary : colors.muted} />
+                  <View style={styles.flex}><Text style={styles.periodName}>{periodLabels[period]}</Text><Text style={styles.small}>{normalizeTime(state.time) ?? state.time}</Text></View>
+                </Pressable>
+                {state.enabled ? <>
+                  <View style={styles.amountRow}>
+                    <Text style={styles.small}>Čas</Text>
+                    <TextInput value={state.time} onChangeText={(time) => setPeriod(period, { time })}
+                      onBlur={() => setPeriod(period, { time: normalizeTime(state.time) ?? state.time })}
+                      keyboardType="numbers-and-punctuation" maxLength={5} placeholder={periodDefaults[period]} placeholderTextColor="#91A099"
+                      style={[styles.timeInput, !timeValid && styles.timeInputInvalid]} accessibilityLabel={`Čas dávky – ${periodLabels[period]}`} />
+                  </View>
+                  <View style={styles.amountRow}><Text style={styles.small}>Množství</Text><Button label="−" variant="ghost" onPress={() => setPeriod(period, { amount: Math.max(amountStep, state.amount - amountStep) })} /><Text style={styles.amount}>{state.amount}</Text><Button label="+" variant="ghost" onPress={() => setPeriod(period, { amount: state.amount + amountStep })} /></View>
+                </> : null}
+              </Card>
+            );
+          })}
         </> : null}
         {step === 3 ? <>
-          <Text style={styles.title}>Poslední kontrola</Text><Text style={styles.lead}>Aplikace dávkování neurčuje. Potvrďte, že odpovídá pokynům lékaře.</Text>
+          <Text style={styles.title}>Poslední kontrola</Text><Text style={styles.lead}>Aplikace dávkování neurčuje. Potvrďte, že odpovídá pokynům lékaře.{editing ? ' Změněný rozpis platí od dnešního dne.' : ''}</Text>
           <Card style={styles.summaryCard}>
             <View style={styles.summaryIcon}><Ionicons name="medical" size={29} color={colors.primary} /></View>
             <Text style={styles.summaryName}>{name} {strength}</Text>
             <SummaryRow label="Pro koho" value={profile.displayName} />
             <SummaryRow label="Balení" value={`${packageSize} ${unit === 'tablet' ? 'tablet' : 'kapslí'}`} />
-            <SummaryRow label="Dny" value={daysMode === 'daily' ? 'Každý den' : 'Pondělí, středa, pátek'} />
+            <SummaryRow label="Dny" value={daysLabel(days)} />
             <SummaryRow label="Dávky" value={times.map((time) => `${time.time} · ${time.amount}`).join(', ')} />
             <SummaryRow label="Typ" value={prescription ? 'Na předpis' : 'Volně prodejný'} />
           </Card>
           <View style={styles.notice}><Ionicons name="information-circle-outline" size={22} color={colors.warning} /><Text style={styles.noticeText}>Při nejasnostech dávkování vždy ověřte u lékaře nebo lékárníka.</Text></View>
         </> : null}
-        <View style={styles.footer}>{step > 1 ? <Button label="Zpět" variant="ghost" onPress={() => setStep((value) => value - 1)} style={styles.flex} /> : null}<Button label={step === 3 ? 'Uložit lék' : 'Pokračovat'} icon={step === 3 ? 'checkmark' : 'arrow-forward'} onPress={step === 3 ? () => void save() : next} style={styles.flex} /></View>
+        <View style={styles.footer}>{step > 1 ? <Button label="Zpět" variant="ghost" onPress={() => setStep((value) => value - 1)} style={styles.flex} /> : null}<Button label={step === 3 ? (editing ? 'Uložit změny' : 'Uložit lék') : 'Pokračovat'} icon={step === 3 ? 'checkmark' : 'arrow-forward'} onPress={step === 3 ? () => void save() : next} style={styles.flex} /></View>
       </Screen>
     </KeyboardAvoidingView>
   );
@@ -137,6 +185,12 @@ const styles = StyleSheet.create({
   hint: { color: colors.muted, fontSize: 12, lineHeight: 18, marginTop: 3 }, segment: { flexDirection: 'row', backgroundColor: '#E9EEEB', padding: 4, borderRadius: radius.md, marginBottom: 11 }, choice: { flex: 1, minHeight: 43, alignItems: 'center', justifyContent: 'center', borderRadius: 12 }, choiceActive: { backgroundColor: colors.surface }, choiceText: { color: colors.muted, fontSize: 14, fontWeight: '700' }, choiceTextActive: { color: colors.primaryDark },
   switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, padding: 14, borderRadius: radius.md, marginVertical: 12 }, small: { color: colors.muted, fontSize: 12, marginTop: 2 },
   periodCard: { padding: 14, marginBottom: 9, shadowOpacity: 0 }, periodCardActive: { borderColor: '#9DD2BE', backgroundColor: '#F9FFFC' }, periodToggle: { flexDirection: 'row', alignItems: 'center', gap: 10 }, periodName: { color: colors.ink, fontSize: 16, fontWeight: '800' },
+  dayRow: { flexDirection: 'row', gap: 6, marginBottom: 8 },
+  day: { flex: 1, minHeight: 46, borderRadius: 12, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center' },
+  dayActive: { backgroundColor: colors.primary, borderColor: colors.primary }, dayText: { color: colors.muted, fontSize: 14, fontWeight: '800' }, dayTextActive: { color: colors.white },
+  link: { color: colors.primaryDark, fontSize: 13, fontWeight: '800', marginBottom: 6 },
+  timeInput: { width: 86, minHeight: 42, marginLeft: 8, borderWidth: 1, borderColor: colors.border, borderRadius: 12, backgroundColor: colors.surface, textAlign: 'center', color: colors.ink, fontSize: 17, fontWeight: '800' },
+  timeInputInvalid: { borderColor: colors.danger },
   amountRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', borderTopWidth: 1, borderTopColor: colors.border, marginTop: 12, paddingTop: 8, gap: 4 }, amount: { minWidth: 34, color: colors.ink, fontSize: 19, fontWeight: '900', textAlign: 'center' },
   summaryCard: { alignItems: 'center' }, summaryIcon: { width: 58, height: 58, borderRadius: 19, backgroundColor: colors.primarySoft, alignItems: 'center', justifyContent: 'center' }, summaryName: { color: colors.ink, fontSize: 21, fontWeight: '900', marginTop: 10, marginBottom: 14 }, summaryRow: { width: '100%', flexDirection: 'row', justifyContent: 'space-between', gap: 15, paddingVertical: 10, borderTopWidth: 1, borderTopColor: colors.border }, summaryLabel: { color: colors.muted, fontSize: 13 }, summaryValue: { flex: 1, color: colors.ink, fontSize: 13, fontWeight: '800', textAlign: 'right' },
   notice: { flexDirection: 'row', gap: 10, backgroundColor: colors.peach, padding: 14, borderRadius: radius.md, marginTop: 14 }, noticeText: { flex: 1, color: colors.warning, fontSize: 13, lineHeight: 19 }, footer: { flexDirection: 'row', gap: 8, marginTop: 24 },

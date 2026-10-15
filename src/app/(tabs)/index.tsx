@@ -14,7 +14,7 @@ import { colors, radius } from '@/theme';
 const dateLabel = new Intl.DateTimeFormat('cs-CZ', { weekday: 'long', day: 'numeric', month: 'long' });
 
 export default function TodayScreen() {
-  const { data, setCurrentProfile, recordDose, syncMessage } = useAppState();
+  const { data, setCurrentProfile, recordDose, undoDose, syncMessage } = useAppState();
   if (!data) return null;
   const profile = data.profiles.find((item) => item.id === data.currentProfileId)!;
   const occurrences = todayOccurrences(data.medications, data.regimens, data.doseActions, profile.id);
@@ -51,7 +51,7 @@ export default function TodayScreen() {
             <SectionTitle title={period.title} action={<Ionicons name={period.icon} size={22} color={colors.warning} />} />
             {items.map((occurrence) => {
               const medication = data.medications.find((item) => item.id === occurrence.medicationId)!;
-              return <DoseCard key={occurrence.id} occurrence={occurrence} medication={medication} onAction={(status) => recordDose(occurrence, status)} />;
+              return <DoseCard key={occurrence.id} occurrence={occurrence} medication={medication} onAction={(status) => recordDose(occurrence, status)} onUndo={() => undoDose(occurrence)} />;
             })}
           </View>
         );
