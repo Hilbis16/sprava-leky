@@ -5,6 +5,7 @@ import { BackHandler, Pressable, ScrollView, StyleSheet, Text, View } from 'reac
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { DoseCard } from '@/components/DoseCard';
+import { NoProfiles } from '@/components/NoProfiles';
 import { PinDialog } from '@/components/PinDialog';
 import { EmptyState } from '@/components/ui';
 import { getSeniorPin } from '@/data/pinStore';
@@ -13,7 +14,7 @@ import { useAppState } from '@/state/AppState';
 import { colors } from '@/theme';
 
 export default function SeniorScreen() {
-  const { data, recordDose, undoDose, setActiveRole } = useAppState();
+  const { data, recordDose, undoDose, setActiveRole,reminderWarning,reminderRefreshBefore } = useAppState();
   const [pin, setPin] = useState<string | null>(null);
   const [asking, setAsking] = useState(false);
   useEffect(() => { void getSeniorPin().then(setPin); }, []);
@@ -26,7 +27,8 @@ export default function SeniorScreen() {
   // Navigation follows the stored role, so leaving and a restart behave the same.
   if (data.activeRole !== 'senior') return <Redirect href="/(tabs)" />;
   const leave = () => setActiveRole('caregiver');
-  const profile = data.profiles.find((item) => item.id === data.currentProfileId)!;
+  const profile = data.profiles.find((item) => item.id === data.currentProfileId);
+  if (!profile) return <NoProfiles />;
   const occurrences = todayOccurrences(data.medications, data.regimens, data.doseActions, profile.id);
   const remaining = occurrences.filter((item) => item.status === 'unconfirmed').length;
   return (
@@ -45,7 +47,9 @@ export default function SeniorScreen() {
           return <DoseCard key={occurrence.id} occurrence={occurrence} medication={medication} senior onAction={(status) => recordDose(occurrence, status)} onUndo={() => undoDose(occurrence)} />;
         })}
       </ScrollView>
-      <Text style={styles.help}>Potřebujete pomoc? Zavolejte svému pečujícímu.</Text>
+      <Text style={styles.help} accessibilityRole={reminderWarning ? 'alert' : undefined}>{reminderWarning ?? (reminderRefreshBefore
+        ? `Další připomínky doplníte otevřením aplikace před ${new Date(reminderRefreshBefore).toLocaleString('cs-CZ',{ dateStyle: 'short',timeStyle: 'short' })}.`
+        : 'Potřebujete pomoc? Zavolejte svému pečujícímu.')}</Text>
       <PinDialog visible={asking} title="Odchod z režimu seniora" body="Zadejte PIN pečujícího." submitLabel="Odemknout"
         onSubmit={(entered) => { if (entered !== pin) return 'Nesprávný PIN.'; setAsking(false); leave(); }} onCancel={() => setAsking(false)} />
     </SafeAreaView>

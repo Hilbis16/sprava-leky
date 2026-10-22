@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { Pressable, Share, StyleSheet, Text, View } from 'react-native';
 
 import { ProfileSwitcher } from '@/components/ProfileSwitcher';
+import { NoProfiles } from '@/components/NoProfiles';
 import { Screen } from '@/components/Screen';
 import { Button, Card, EmptyState, SectionTitle, StatusPill } from '@/components/ui';
 import { adherenceByMedication, doseHistory, historyReport, type DayStatus } from '@/domain/history';
@@ -25,7 +26,8 @@ export default function HistoryScreen() {
   const { data, setCurrentProfile } = useAppState();
   const [selected, setSelected] = useState<string | null>(null);
   if (!data) return null;
-  const profile = data.profiles.find((item) => item.id === data.currentProfileId)!;
+  const profile = data.profiles.find((item) => item.id === data.currentProfileId);
+  if (!profile) return <NoProfiles />;
   const history = doseHistory(data.medications, data.regimens, data.doseActions, profile.id, DAYS);
   const summary = adherenceByMedication(history);
   const selectedDay = history.find((day) => day.date === selected) ?? history.at(-1)!;

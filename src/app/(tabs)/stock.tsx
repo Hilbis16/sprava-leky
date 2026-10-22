@@ -1,9 +1,11 @@
+import { showMessage } from '@/components/message';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import React from 'react';
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Screen } from '@/components/Screen';
+import { NoProfiles } from '@/components/NoProfiles';
 import { Button, Card, EmptyState, SectionTitle, StatusPill } from '@/components/ui';
 import { forecastMedication, forecastTone } from '@/domain/forecast';
 import { courseFinished, formatCzechDate } from '@/domain/schedule';
@@ -11,13 +13,14 @@ import { useAppState } from '@/state/AppState';
 import { colors } from '@/theme';
 
 export default function StockScreen() {
-  const { data, addStock } = useAppState();
+  const { data, addStock,canEditProfile } = useAppState();
   if (!data) return null;
+  if (!data.profiles.length) return <NoProfiles />;
   const meds = data.medications.filter((med) => med.profileId === data.currentProfileId && med.active
     && !courseFinished(data.regimens.find((item) => item.medicationId === med.id)));
   return (
     <Screen>
-      <View style={styles.header}><View><Text style={styles.eyebrow}>PŘEHLED</Text><Text style={styles.title}>Zásoby léků</Text></View><Button label="Přidat" icon="add" onPress={() => router.push('/medicine/new')} /></View>
+      <View style={styles.header}><View><Text style={styles.eyebrow}>PŘEHLED</Text><Text style={styles.title}>Zásoby léků</Text></View><Button disabled={!canEditProfile(data.currentProfileId)} label="Přidat" icon="add" onPress={() => router.push('/medicine/new')} /></View>
       <Text style={styles.lead}>Odhad vychází z rozpisu a zaznamenaných doplnění. Nepotvrzené dávky se počítají jako užité.</Text>
       <SectionTitle title={`${meds.length} aktivní ${meds.length === 1 ? 'lék' : meds.length < 5 ? 'léky' : 'léků'}`} />
       {meds.length === 0 ? <EmptyState icon="file-tray-outline" title="Zatím žádné zásoby" body="Přidejte první lék a jeho balení." /> : meds.map((medication) => {
@@ -39,9 +42,9 @@ export default function StockScreen() {
                 <Button label="Připravit žádost o eRecept" icon="document-text-outline" variant="ghost" onPress={() => router.push('/requests')} style={styles.rx} />
               ) : null}
               <View style={styles.actions}>
-                <Button label={`Přidat balení (+${medication.packageSize})`} variant="secondary" icon="add-circle-outline" onPress={() => {
-                  addStock(medication.id, medication.packageSize);
-                  Alert.alert('Zásoba doplněna', `Přidáno ${medication.packageSize} ${medication.unit === 'tablet' ? 'tablet' : 'kapslí'}.`);
+                <Button disabled={!canEditProfile(medication.profileId)} label={`Přidat balení (+${medication.packageSize})`} variant="secondary" icon="add-circle-outline" onPress={() => {
+                  if (!addStock(medication.id, medication.packageSize)) return;
+                  showMessage('Zásoba doplněna', `Přidáno ${medication.packageSize} ${medication.unit === 'tablet' ? 'tablet' : 'kapslí'}.`);
                 }} style={styles.refill} />
                 <Ionicons name="chevron-forward" size={22} color={colors.muted} />
               </View>

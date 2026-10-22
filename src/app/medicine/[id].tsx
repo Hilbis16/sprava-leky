@@ -1,7 +1,8 @@
+import { showMessage } from '@/components/message';
 import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import React, { useState } from 'react';
-import { Alert, Modal, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Modal, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { confirmAction } from '@/components/confirm';
 import { Screen } from '@/components/Screen';
@@ -10,6 +11,7 @@ import { forecastMedication, forecastTone } from '@/domain/forecast';
 import type { InventoryEvent } from '@/domain/types';
 import { courseFinished, formatCzechDate } from '@/domain/schedule';
 import { daysLabel } from '@/domain/weekdays';
+import { countedStockSchema, parseQuantity, validationMessage } from '@/domain/validation';
 import { useAppState } from '@/state/AppState';
 import { colors, radius } from '@/theme';
 
@@ -17,12 +19,13 @@ const historyTitle: Record<InventoryEvent['kind'], string> = { initial: 'Počát
 
 export default function MedicineDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { data, addStock, correctStock, deactivateMedicine } = useAppState();
+  const { data, addStock, correctStock, deactivateMedicine,canEditProfile } = useAppState();
   const [counting, setCounting] = useState(false);
   const [counted, setCounted] = useState('');
   if (!data) return null;
   const medication = data.medications.find((item) => item.id === id);
   if (!medication) return <Screen><Text>Lék nebyl nalezen.</Text></Screen>;
+  const editable = canEditProfile(medication.profileId);
   const regimen = data.regimens.find((item) => item.medicationId === medication.id);
   const forecast = forecastMedication(medication, regimen, data.inventoryEvents, data.doseActions);
   const tone = forecastTone(forecast.daysRemaining);
@@ -31,9 +34,9 @@ export default function MedicineDetailScreen() {
 
   const openCount = () => { setCounted(String(forecast.estimatedStock)); setCounting(true); };
   const saveCount = () => {
-    const value = Number(counted.replace(',', '.'));
-    if (!counted.trim() || !Number.isFinite(value) || value < 0) return Alert.alert('Zkontrolujte počet', 'Zadejte, kolik kusů skutečně zbývá.');
-    correctStock(medication.id, value);
+    const parsed = countedStockSchema.safeParse(parseQuantity(counted));
+    if (!parsed.success) return showMessage('Zkontrolujte počet', validationMessage(parsed.error));
+    if (!correctStock(medication.id, parsed.data)) return;
     setCounting(false);
   };
   const endMedication = async () => {
@@ -51,12 +54,12 @@ export default function MedicineDetailScreen() {
         <View style={styles.stockRow}><Text style={styles.stock}>{forecast.estimatedStock}</Text><Text style={styles.unit}>{unitLabel}</Text></View>
         <Text style={styles.meta}>{forecast.daysRemaining === null ? 'Datum vyčerpání není k dispozici' : `Přibližně na ${forecast.daysRemaining} dní`}</Text>
         <StatusPill label={tone === 'critical' ? 'Je čas řešit doplnění' : tone === 'warning' ? 'Blíží se upozornění' : 'Zásoba je v pořádku'} tone={tone === 'unknown' ? 'neutral' : tone} />
-        {medication.active ? <>
-          <Button label={`Přidat celé balení (+${medication.packageSize})`} icon="add-circle-outline" onPress={() => { addStock(medication.id, medication.packageSize); Alert.alert('Hotovo', 'Nové balení bylo přidáno do zásoby.'); }} style={styles.refill} />
+        {medication.active && editable ? <>
+          <Button label={`Přidat celé balení (+${medication.packageSize})`} icon="add-circle-outline" onPress={() => { if (addStock(medication.id, medication.packageSize)) showMessage('Hotovo', 'Nové balení bylo přidáno do zásoby.'); }} style={styles.refill} />
           <Button label="Spočítal/a jsem zásobu" icon="calculator-outline" variant="ghost" onPress={openCount} style={styles.fullWidth} />
         </> : null}
       </Card>
-      <SectionTitle title="Dávkování" action={medication.active ? <Button label="Upravit" icon="create-outline" variant="ghost" onPress={() => router.push({ pathname: '/medicine/new', params: { id: medication.id } })} /> : undefined} />
+      <SectionTitle title="Dávkování" action={medication.active && editable ? <Button label="Upravit" icon="create-outline" variant="ghost" onPress={() => router.push({ pathname: '/medicine/new', params: { id: medication.id } })} /> : undefined} />
       <Card>
         <InfoRow icon="time-outline" label="Denní časy" value={doseLabel} />
         <InfoRow icon="calendar-outline" label="Dny" value={regimen ? daysLabel(regimen.daysOfWeek) : 'Bez rozpisu'} />
@@ -74,7 +77,7 @@ export default function MedicineDetailScreen() {
           <Text style={[styles.quantity, event.quantity < 0 && styles.quantityNegative]}>{event.quantity > 0 ? `+${event.quantity}` : event.quantity}</Text>
         </Card>
       ))}
-      {medication.active ? <Button label="Ukončit užívání" icon="stop-circle-outline" variant="ghost" onPress={() => void endMedication()} style={styles.end} /> : null}
+      {medication.active && editable ? <Button label="Ukončit užívání" icon="stop-circle-outline" variant="ghost" onPress={() => void endMedication()} style={styles.end} /> : null}
       <Modal visible={counting} transparent animationType="fade" onRequestClose={() => setCounting(false)}>
         <View style={styles.backdrop}>
           <Card style={styles.modal}>

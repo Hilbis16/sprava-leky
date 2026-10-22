@@ -17,13 +17,14 @@ export function applySyncResult(current: AppData, sentMutationIds: ReadonlySet<s
     return { ...current, pendingMutations, lastSyncedAt: result.syncedAt ?? current.lastSyncedAt, cloudBootstrappedFor };
   }
 
-  const replayed = recordedDuringSync.reduce(applyMutation, result.data);
+  const replayed = pendingMutations.reduce(applyMutation, result.data);
   const keepProfile = replayed.profiles.some((profile) => profile.id === current.currentProfileId);
   return {
     ...replayed,
     currentProfileId: keepProfile ? current.currentProfileId : replayed.currentProfileId,
-    activeRole: current.activeRole,
+    activeRole: replayed.profiles.length ? current.activeRole : 'caregiver',
     notificationPreferences: current.notificationPreferences,
+    remoteRevisions: result.data.remoteRevisions,
     pendingMutations,
     lastSyncedAt: result.syncedAt ?? current.lastSyncedAt,
     cloudBootstrappedFor,

@@ -2,10 +2,9 @@ import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
-import { cloudEnabled, ensureCloudSession, supabase } from '@/data/supabase';
-import { forecastMedication, stockAlertDates } from '@/domain/forecast';
-import { courseFinished } from '@/domain/schedule';
-import type { AppData, Medication, RegimenRule } from '@/domain/types';
+import { apiEnabled, apiRequest } from '@/data/api';
+import type { AppData } from '@/domain/types';
+import { buildReminderPlan, type ReminderUpdate } from './reminderPlan';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -31,95 +30,70 @@ export async function requestNotificationPermission(): Promise<boolean> {
 }
 
 /**
- * Registers this device for caregiver alerts sent by the push-notifications
- * edge function. Needs the cloud and a real EAS project id in app.json.
+ * Registruje zařízení pro upozornění z vlastního serverového workeru.
+ * Vyžaduje přihlášení a skutečné Expo projectId v app.json.
  */
-export async function registerPushDevice(): Promise<void> {
-  if (!cloudEnabled || !supabase) return;
+export async function registerPushDevice(accountId: string): Promise<void> {
+  if (!apiEnabled) return;
   const projectId: string | undefined = Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
   if (!projectId || projectId.startsWith('REPLACE_')) return;
   try {
     if (!(await requestNotificationPermission())) return;
-    await ensureCloudSession();
     const { data: token } = await Notifications.getExpoPushTokenAsync({ projectId });
-    const { error } = await supabase.rpc('register_push_device', { push_token: token, device_platform: Platform.OS });
-    if (error) throw error;
+    await apiRequest('/v1/devices',{ method: 'POST',body: JSON.stringify({ pushToken: token,platform: Platform.OS }) },accountId);
   } catch (error) {
     // Emulators have no push token; local reminders keep working without it.
     console.warn('Zařízení se nepodařilo zaregistrovat pro upozornění.', error);
   }
 }
 
-export async function cancelMedicationReminders(medicationId: string): Promise<void> {
-  const scheduled = await Notifications.getAllScheduledNotificationsAsync();
-  await Promise.all(scheduled
-    .filter((request) => request.content.data?.medicationId === medicationId)
-    .map((request) => Notifications.cancelScheduledNotificationAsync(request.identifier)));
-}
+let changes: Promise<unknown> = Promise.resolve();
+let requestedVersion = 0;
 
-export async function scheduleMedicationReminders(medication: Medication, regimen: RegimenRule): Promise<void> {
-  await cancelMedicationReminders(medication.id);
-  if (!medication.active || regimen.asNeeded) return;
-  const allowed = await requestNotificationPermission();
-  if (!allowed) return;
-
-  for (const dose of regimen.times) {
-    const [hour = 8, minute = 0] = dose.time.split(':').map(Number);
-    for (const day of regimen.daysOfWeek) {
+/** Aktualizuje společný plán a odstraní i staré neomezené připomínky kúry. */
+export function reconcileLocalReminders(data: AppData,now = new Date()): Promise<ReminderUpdate | undefined> {
+  const version = ++requestedVersion;
+  const next = changes.catch(() => undefined).then(async () => {
+    if (version !== requestedVersion) return;
+    const plan = buildReminderPlan(data,now);
+    const wanted = new Set(plan.reminders.map((reminder) => reminder.id));
+    const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+    const existing = new Set<string>();
+    for (const request of scheduled) {
+      const kind = request.content.data?.kind;
+      const managed = kind === 'dose' || kind === 'stock' || typeof request.content.data?.medicationId === 'string'
+        || request.identifier.startsWith('local-v2-');
+      if (!managed) continue;
+      if (!wanted.has(request.identifier)) await Notifications.cancelScheduledNotificationAsync(request.identifier);
+      else existing.add(request.identifier);
+    }
+    const permission = await Notifications.getPermissionsAsync();
+    if (!permission.granted) {
+      for (const identifier of existing) await Notifications.cancelScheduledNotificationAsync(identifier);
+      return { supported: true,permissionGranted: false };
+    }
+    if (Platform.OS === 'android') await Notifications.setNotificationChannelAsync('medicine-reminders',{
+      name: 'Připomenutí léků',importance: Notifications.AndroidImportance.HIGH,vibrationPattern: [0,250,150,250],lightColor: '#147D64',
+    });
+    for (const reminder of plan.reminders) {
+      if (version !== requestedVersion) return;
+      if (existing.has(reminder.id)) continue;
       await Notifications.scheduleNotificationAsync({
+        identifier: reminder.id,
         content: {
-          // The lock screen is visible to anyone nearby, so the text never names the medicine.
           title: 'Moje léky',
-          body: 'Je čas na léky. Otevřete aplikaci a potvrďte dávku.',
-          data: { medicationId: medication.id },
+          body: reminder.kind === 'dose' ? 'Je čas na léky. Otevřete aplikaci a potvrďte dávku.' : 'Některý lék brzy dojde. Otevřete aplikaci a zkontrolujte zásoby.',
+          data: { kind: reminder.kind,route: reminder.kind === 'dose' ? '/(tabs)' : '/(tabs)/stock' },
         },
-        trigger: {
-          type: Notifications.SchedulableTriggerInputTypes.WEEKLY,
-          weekday: day === 0 ? 1 : day + 1,
-          hour,
-          minute,
-          channelId: 'medicine-reminders',
-        },
+        trigger: 'at' in reminder
+          ? { type: Notifications.SchedulableTriggerInputTypes.DATE,date: reminder.at,channelId: 'medicine-reminders' }
+          : { type: Notifications.SchedulableTriggerInputTypes.WEEKLY,weekday: reminder.weekday,hour: reminder.hour,minute: reminder.minute,channelId: 'medicine-reminders' },
       });
     }
-  }
-}
-
-let lastStockSignature = '';
-
-/**
- * Schedules "running out" reminders (by default 14 and 7 days ahead) for every
- * active medicine. Several medicines on one day share one generic reminder.
- * Never asks for permission itself; it runs in the background after changes.
- */
-export async function scheduleStockAlerts(data: AppData, now = new Date()): Promise<void> {
-  const moments = new Set<number>();
-  for (const medication of data.medications) {
-    const regimen = data.regimens.find((item) => item.medicationId === medication.id);
-    if (!medication.active || courseFinished(regimen, now)) continue;
-    const { shortageAt } = forecastMedication(medication, regimen, data.inventoryEvents, data.doseActions, now);
-    stockAlertDates(shortageAt, data.notificationPreferences.stockThresholdDays, now).forEach((at) => moments.add(at.getTime()));
-  }
-  const signature = [...moments].sort().join(',');
-  if (signature === lastStockSignature) return;
-  const permission = await Notifications.getPermissionsAsync();
-  if (!permission.granted) return;
-  lastStockSignature = signature;
-
-  const scheduled = await Notifications.getAllScheduledNotificationsAsync();
-  await Promise.all(scheduled
-    .filter((request) => request.content.data?.kind === 'stock')
-    .map((request) => Notifications.cancelScheduledNotificationAsync(request.identifier)));
-  for (const at of moments) {
-    await Notifications.scheduleNotificationAsync({
-      content: {
-        title: 'Moje léky',
-        body: 'Některý lék brzy dojde. Otevřete aplikaci a zkontrolujte zásoby.',
-        data: { kind: 'stock', route: '/(tabs)/stock' },
-      },
-      trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: new Date(at), channelId: 'medicine-reminders' },
-    });
-  }
+    return { supported: true,permissionGranted: true,refreshBefore: plan.refreshBefore };
+  });
+  changes = next;
+  return next;
 }
 
 /** Opens the screen a tapped notification points to, also after a cold start. */

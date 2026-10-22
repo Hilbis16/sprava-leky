@@ -1,0 +1,31 @@
+{
+  "name": "@moje-leky/server",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=.env src/index.ts",
+    "start": "tsx --env-file-if-exists=.env src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "migrate": "tsx --env-file-if-exists=.env src/migrate.ts",
+    "worker": "tsx --env-file-if-exists=.env src/worker.ts",
+    "test": "vitest run --config vitest.config.ts",
+    "legacy": "tsx --env-file-if-exists=.env src/legacy-cli.ts"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.3.1",
+    "@fastify/rate-limit": "^11.2.1",
+    "better-auth": "^1.7.12",
+    "fastify": "^5.12.7",
+    "nodemailer": "^10.1.7",
+    "pg": "^8.23.1",
+    "tsx": "^4.23.15",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@types/nodemailer": "^8.0.2",
+    "@types/pg": "^8.23.1",
+    "embedded-postgres": "^18.4.0-beta.17"
+  }
+}

@@ -4,6 +4,7 @@ import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { DoseCard } from '@/components/DoseCard';
+import { NoProfiles } from '@/components/NoProfiles';
 import { ProfileSwitcher } from '@/components/ProfileSwitcher';
 import { Screen } from '@/components/Screen';
 import { Button, Card, EmptyState, SectionTitle, StatusPill } from '@/components/ui';
@@ -15,9 +16,10 @@ import { colors, radius } from '@/theme';
 const dateLabel = new Intl.DateTimeFormat('cs-CZ', { weekday: 'long', day: 'numeric', month: 'long' });
 
 export default function TodayScreen() {
-  const { data, setCurrentProfile, recordDose, undoDose, syncMessage } = useAppState();
+  const { data, setCurrentProfile, recordDose, undoDose, syncMessage,canEditProfile } = useAppState();
   if (!data) return null;
-  const profile = data.profiles.find((item) => item.id === data.currentProfileId)!;
+  const profile = data.profiles.find((item) => item.id === data.currentProfileId);
+  if (!profile) return <NoProfiles />;
   const occurrences = todayOccurrences(data.medications, data.regimens, data.doseActions, profile.id);
   const done = occurrences.filter((item) => item.status !== 'unconfirmed').length;
   const runningLow = data.medications
@@ -40,7 +42,7 @@ export default function TodayScreen() {
     <Screen>
       <View style={styles.topbar}>
         <ProfileSwitcher profiles={data.profiles} currentId={profile.id} onChange={setCurrentProfile} />
-        <Pressable style={styles.addIcon} onPress={() => router.push('/medicine/new')} accessibilityLabel="Přidat lék"><Ionicons name="add" size={27} color={colors.white} /></Pressable>
+        {canEditProfile(profile.id) ? <Pressable style={styles.addIcon} onPress={() => router.push('/medicine/new')} accessibilityLabel="Přidat lék"><Ionicons name="add" size={27} color={colors.white} /></Pressable> : null}
       </View>
       <View style={styles.headingRow}>
         <View><Text style={styles.eyebrow}>{dateLabel.format(new Date())}</Text><Text style={styles.title}>Dnešní léky</Text></View>
@@ -79,7 +81,7 @@ export default function TodayScreen() {
           </View>
         );
       })}
-      <Button label="Přidat další lék" icon="add-circle-outline" variant="secondary" onPress={() => router.push('/medicine/new')} style={styles.addButton} />
+      {canEditProfile(profile.id) ? <Button label="Přidat další lék" icon="add-circle-outline" variant="secondary" onPress={() => router.push('/medicine/new')} style={styles.addButton} /> : null}
       <Button label="Historie užívání" icon="calendar-outline" variant="ghost" onPress={() => router.push('/history')} style={styles.historyButton} />
     </Screen>
   );

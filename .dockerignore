@@ -1,0 +1,12 @@
+**/node_modules
+.git
+.cache
+.expo
+dist
+dist-android
+coverage
+**/.env
+**/.env.local
+**/*.key
+**/*.p12
+**/*.jks

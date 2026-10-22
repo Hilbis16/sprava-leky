@@ -3,7 +3,7 @@ import expo from 'eslint-config-expo/flat.js';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['.expo/**', 'dist/**', 'dist-android/**', 'coverage/**', 'graphify-out/**', 'supabase/functions/**'] },
+  { ignores: ['.expo/**', '.cache/**', 'dist/**', 'dist-android/**', 'server/dist/**', 'coverage/**', 'graphify-out/**', 'supabase/functions/**'] },
   js.configs.recommended,
   ...expo,
   ...tseslint.configs.recommended,

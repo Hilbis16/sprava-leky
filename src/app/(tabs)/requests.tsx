@@ -1,9 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import React from 'react';
-import { Alert, Linking, Share, StyleSheet, Text, View } from 'react-native';
+import { Linking, Share, StyleSheet, Text, View } from 'react-native';
 
 import { Screen } from '@/components/Screen';
+import { NoProfiles } from '@/components/NoProfiles';
+import { confirmAction } from '@/components/confirm';
 import { Button, Card, EmptyState, SectionTitle, StatusPill } from '@/components/ui';
 import { forecastMedication } from '@/domain/forecast';
 import { buildRxRequestMessage } from '@/domain/rxRequest';
@@ -15,9 +17,11 @@ import { colors } from '@/theme';
 const statusLabel = { draft: 'Připraveno', sent: 'Odesláno', completed: 'Vyřízeno', dismissed: 'Zrušeno' } as const;
 
 export default function RequestsScreen() {
-  const { data, saveRxRequest, updateRxRequestStatus } = useAppState();
+  const { data, saveRxRequest, updateRxRequestStatus,canEditProfile } = useAppState();
   if (!data) return null;
-  const profile = data.profiles.find((item) => item.id === data.currentProfileId)!;
+  const profile = data.profiles.find((item) => item.id === data.currentProfileId);
+  if (!profile) return <NoProfiles />;
+  if (!canEditProfile(profile.id)) return <Screen><Card><Text>Žádosti o eRecept vyřizuje vlastník nebo pečující.</Text></Card></Screen>;
   const doctor = data.prescribers.find((item) => item.profileId === profile.id && (item.kind ?? 'doctor') === 'doctor');
   const prescriptionMeds = data.medications.filter((item) => item.profileId === profile.id && item.prescription && item.active
     && !courseFinished(data.regimens.find((regimen) => regimen.medicationId === item.id)));
@@ -28,14 +32,14 @@ export default function RequestsScreen() {
     const forecast = forecastMedication(medication, regimen, data.inventoryEvents, data.doseActions);
     const message = buildRxRequestMessage({ profile, medication, prescriber: doctor, shortageAt: forecast.shortageAt });
     const id = saveRxRequest({ medicationId: medication.id, message, channel });
+    if (!id) return;
     try {
       if (channel === 'sms' && doctor?.phone) await Linking.openURL(`sms:${doctor.phone}?body=${encodeURIComponent(message)}`);
       else if (channel === 'email' && doctor?.email) await Linking.openURL(`mailto:${doctor.email}?subject=${encodeURIComponent(`Žádost o eRecept – ${medication.name}`)}&body=${encodeURIComponent(message)}`);
       else await Share.share({ message, title: `Žádost o eRecept – ${medication.name}` });
-      Alert.alert('Je zpráva odeslaná?', 'Operační systém nám výsledek odeslání nesdělí. Označte stav ručně.', [
-        { text: 'Zatím ne', style: 'cancel' },
-        { text: 'Ano, odesláno', onPress: () => updateRxRequestStatus(id, 'sent') },
-      ]);
+      if (await confirmAction('Je zpráva odeslaná?', 'Operační systém nám výsledek odeslání nesdělí. Označte stav ručně.', 'Ano, odesláno', false, 'Zatím ne')) {
+        updateRxRequestStatus(id, 'sent');
+      }
     } catch { /* User can return and retry from the saved draft. */ }
   };
 

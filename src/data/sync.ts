@@ -1,98 +1,53 @@
-import type { AppData } from '@/domain/types';
-import { pullAccessibleFamilyData } from './invites';
-import { cloudEnabled, ensureCloudSession, supabase } from './supabase';
+import type { AppData, PendingMutation } from '@/domain/types';
+import { apiEnabled, apiRequest, ApiError } from './api';
+import { replaceFamilySnapshots, type FamilySnapshot } from './mergeFamily';
 
+export interface ServerSnapshot { snapshots: FamilySnapshot[]; revisions: Record<string, number>; syncedAt: string }
 export interface SyncResult {
-  synced: boolean;
-  remaining: AppData['pendingMutations'];
-  syncedAt?: string;
-  message: string;
-  data?: AppData;
-  /** Set once the full local history has been uploaded for this cloud user. */
-  bootstrappedFor?: string;
+  synced: boolean; remaining: PendingMutation[]; syncedAt?: string; message: string; data?: AppData;
+  bootstrappedFor?: string; conflict?: boolean;
 }
 
-export async function syncPendingMutations(data: AppData): Promise<SyncResult> {
-  if (!cloudEnabled || !supabase) {
-    return { synced: false, remaining: data.pendingMutations, message: 'Demo režim – cloud není připojený' };
-  }
+export function bootstrapMutations(data: AppData, userId: string): PendingMutation[] {
+  const result: PendingMutation[] = [];
+  const add = (entity: PendingMutation['entity'], id: string, payload: unknown) => result.push({
+    id: `import:${userId}:${entity}:${id}`,entity,payload,createdAt: '2026-01-01T00:00:00.000Z',
+  });
+  data.profiles.forEach((p) => add('profile',p.id,p));
+  data.medications.forEach((medication) => {
+    const regimen = data.regimens.find((r) => r.medicationId === medication.id);
+    if (!regimen) throw new Error('Původnímu léku chybí rozvrh. Nejprve opravte původní data; nebyla přepsána.');
+    add('medication',medication.id,{ medication,regimen });
+  });
+  data.inventoryEvents.forEach((e) => add('inventory_event',e.id,e));
+  data.doseActions.forEach((a) => add('dose_action',a.id,a));
+  data.prescribers.forEach((p) => add('prescriber',p.id,p));
+  data.rxRequests.forEach((r) => add('rx_request',r.id,r));
+  return result;
+}
+export function applyServerSnapshot(base: AppData, result: ServerSnapshot): AppData {
+  return { ...replaceFamilySnapshots(base,result.snapshots),remoteRevisions: result.revisions,lastSyncedAt: result.syncedAt };
+}
+export async function fetchServerSnapshot(base: AppData,userId: string): Promise<AppData> {
+  const result = await apiRequest<ServerSnapshot>('/v1/snapshot',{},userId);
+  return applyServerSnapshot(base,result);
+}
+export async function syncPendingMutations(data: AppData,userId: string,force = false): Promise<SyncResult> {
+  if (!apiEnabled) return { synced: false,remaining: data.pendingMutations,message: 'Demo režim – server není připojený' };
   if (typeof globalThis.navigator?.onLine === 'boolean' && !globalThis.navigator.onLine) {
-    return { synced: false, remaining: data.pendingMutations, message: 'Zařízení je offline' };
+    return { synced: false,remaining: data.pendingMutations,message: 'Zařízení je offline' };
   }
-
-  let userId: string;
+  const mutations = data.pendingMutations.slice(0,500);
   try {
-    userId = (await ensureCloudSession()).user.id;
+    const result = await apiRequest<ServerSnapshot & { acknowledged: string[] }>('/v1/sync',{
+      method: 'POST',body: JSON.stringify({ mutations,revisions: data.remoteRevisions ?? {},force }),
+    },userId);
+    const acknowledged = new Set(result.acknowledged);
+    const remaining = data.pendingMutations.filter((m) => !acknowledged.has(m.id));
+    return { synced: true,remaining,syncedAt: result.syncedAt,
+      message: remaining.length ? `${remaining.length} změn ještě čeká na odeslání` : 'Data jsou synchronizovaná',data: applyServerSnapshot(data,result),bootstrappedFor: userId };
   } catch (error) {
-    return { synced: false, remaining: data.pendingMutations, message: error instanceof Error ? error.message : 'Přihlášení selhalo' };
+    return { synced: false,remaining: data.pendingMutations,conflict: error instanceof ApiError && error.code === 'SYNC_CONFLICT',
+      message: error instanceof ApiError ? error.message : 'Server není dostupný. Změny zůstaly v zařízení.' };
   }
-
-  // The first sync for a cloud user uploads the whole local history; after that
-  // only queued mutations are sent, so routine syncs stay small.
-  const bootstrapped = data.cloudBootstrappedFor === userId;
-  for (const profile of bootstrapped ? [] : data.profiles) {
-    const { error } = await supabase.rpc('bootstrap_family_profile', {
-      requested_id: profile.id,
-      requested_name: profile.displayName,
-    });
-    if (error) return { synced: false, remaining: data.pendingMutations, message: error.message };
-  }
-
-  const bootstrapMutations: AppData['pendingMutations'] = [];
-  for (const medication of bootstrapped ? [] : data.medications) {
-    const regimen = data.regimens.find((item) => item.medicationId === medication.id);
-    const inventory = data.inventoryEvents.find((item) => item.medicationId === medication.id);
-    if (regimen && inventory) {
-      bootstrapMutations.push({
-        id: `bootstrap-medication-${medication.id}`,
-        entity: 'medication',
-        payload: { medication, regimen, inventory },
-        createdAt: medication.createdAt,
-      });
-    }
-  }
-  for (const action of bootstrapped ? [] : data.doseActions) {
-    bootstrapMutations.push({ id: `bootstrap-action-${action.id}`, entity: 'dose_action', payload: action, createdAt: action.recordedAt });
-  }
-  for (const profile of bootstrapped ? [] : data.profiles) {
-    bootstrapMutations.push({ id: `bootstrap-profile-${profile.id}`, entity: 'profile', payload: profile, createdAt: new Date().toISOString() });
-  }
-  for (const prescriber of bootstrapped ? [] : data.prescribers) {
-    bootstrapMutations.push({ id: `bootstrap-prescriber-${prescriber.id}`, entity: 'prescriber', payload: prescriber, createdAt: new Date().toISOString() });
-  }
-  const queued = new Map(bootstrapMutations.map((mutation) => [mutation.id, mutation]));
-  data.pendingMutations.forEach((mutation) => queued.set(mutation.id, mutation));
-
-  const failed: AppData['pendingMutations'] = [];
-  for (const mutation of queued.values()) {
-    const { error } = await supabase.rpc('apply_mobile_mutation', {
-      mutation_id: mutation.id,
-      entity_name: mutation.entity,
-      body: mutation.payload,
-    });
-    if (error) failed.push(mutation);
-  }
-  const syncedAt = new Date().toISOString();
-  let pulledData: AppData | undefined;
-  if (!failed.length) {
-    try {
-      pulledData = await pullAccessibleFamilyData({ ...data, pendingMutations: [], lastSyncedAt: syncedAt });
-    } catch (error) {
-      return {
-        synced: true,
-        remaining: [],
-        syncedAt,
-        bootstrappedFor: userId,
-        message: `Změny byly odeslány, ale stažení rodinných dat selhalo: ${error instanceof Error ? error.message : 'neznámá chyba'}`,
-      };
-    }
-  }
-  return {
-    synced: failed.length === 0,
-    remaining: failed,
-    syncedAt,
-    message: failed.length ? `${failed.length} změn čeká na další pokus` : 'Všechny změny jsou synchronizované',
-    data: pulledData,
-    bootstrappedFor: failed.length ? undefined : userId,
-  };
 }

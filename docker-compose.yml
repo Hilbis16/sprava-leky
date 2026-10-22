@@ -1,0 +1,64 @@
+# Lokální vývoj. Produkční nastavení viz docs/DEVELOPMENT.md.
+x-backend: &backend
+  build:
+    context: .
+    dockerfile: server/Dockerfile
+  environment: &backend-env
+    NODE_ENV: development
+    DATABASE_URL: postgresql://mojeleky:${POSTGRES_PASSWORD:?Nastavte POSTGRES_PASSWORD v server/.env}@db:5432/mojeleky
+    AUTH_SECRET: ${AUTH_SECRET:?Nastavte AUTH_SECRET v server/.env}
+    PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:3001}
+    APP_WEB_URL: ${APP_WEB_URL:-http://localhost:8081}
+    CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8081}
+    HOST: 0.0.0.0
+    PORT: 3001
+    SMTP_HOST: mailpit
+    SMTP_PORT: 1025
+    MAIL_FROM: Moje léky <noreply@localhost>
+    MISSED_DOSE_DELAY_MINUTES: ${MISSED_DOSE_DELAY_MINUTES:-120}
+    EXPO_ACCESS_TOKEN: ${EXPO_ACCESS_TOKEN:-}
+
+services:
+  db:
+    image: postgres:18-bookworm
+    environment:
+      POSTGRES_DB: mojeleky
+      POSTGRES_USER: mojeleky
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Nastavte POSTGRES_PASSWORD v server/.env}
+    ports: ["127.0.0.1:5432:5432"]
+    volumes: ["postgres-data:/var/lib/postgresql"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mojeleky -d mojeleky"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+    restart: unless-stopped
+  mailpit:
+    image: axllent/mailpit:v1.27.0
+    ports: ["127.0.0.1:8025:8025", "127.0.0.1:1025:1025"]
+    restart: unless-stopped
+  migrate:
+    <<: *backend
+    command: ["npm", "run", "migrate"]
+    depends_on:
+      db: { condition: service_healthy }
+  api:
+    <<: *backend
+    ports: ["${API_BIND_ADDRESS:-127.0.0.1}:3001:3001"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      mailpit: { condition: service_started }
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+  worker:
+    <<: *backend
+    command: ["npm", "run", "worker"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    restart: unless-stopped
+volumes:
+  postgres-data:

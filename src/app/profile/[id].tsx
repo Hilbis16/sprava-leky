@@ -1,12 +1,14 @@
+import { showMessage } from '@/components/message';
 import { Ionicons } from '@expo/vector-icons';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import React, { useState } from 'react';
-import { Alert, Linking, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Linking, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { confirmAction } from '@/components/confirm';
 import { Screen } from '@/components/Screen';
 import { Avatar, Button, Card, SectionTitle } from '@/components/ui';
 import type { PrescriberContact } from '@/domain/types';
+import { contactSchema, limits, profileNameSchema, validationMessage } from '@/domain/validation';
 import { useAppState } from '@/state/AppState';
 import { colors, radius } from '@/theme';
 
@@ -19,19 +21,22 @@ const contactLabels: Record<ContactKind, { title: string; placeholder: string }>
 
 export default function ProfileScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { data, saveProfile, removeProfile } = useAppState();
+  const { data, saveProfile, removeProfile,canEditProfile } = useAppState();
   const profile = id === 'new' ? undefined : data?.profiles.find((item) => item.id === id);
   const [name, setName] = useState(profile?.displayName ?? '');
   const [color, setColor] = useState(profile?.color ?? palette[0]!);
   if (!data) return null;
   if (id !== 'new' && !profile) return <Screen><Text style={styles.body}>Osoba nebyla nalezena.</Text></Screen>;
+  const editable = !profile || canEditProfile(profile.id);
   const initials = name.trim().split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]!.toUpperCase()).join('') || '?';
 
   const save = () => {
-    if (!name.trim()) return Alert.alert('Doplňte jméno', 'Jméno osoby je povinné.');
-    const savedId = saveProfile({ id: profile?.id, displayName: name, color });
+    const parsed = profileNameSchema.safeParse(name);
+    if (!parsed.success) return showMessage('Zkontrolujte jméno', validationMessage(parsed.error));
+    const savedId = saveProfile({ id: profile?.id, displayName: parsed.data, color });
+    if (!savedId) return;
     if (!profile) router.replace({ pathname: '/profile/[id]', params: { id: savedId } });
-    else Alert.alert('Uloženo', 'Údaje osoby byly uloženy.');
+    else showMessage('Uloženo', 'Údaje osoby byly uloženy.');
   };
   const remove = async () => {
     if (!profile) return;
@@ -46,17 +51,17 @@ export default function ProfileScreen() {
       <Stack.Screen options={{ title: profile ? 'Osoba a kontakty' : 'Přidat osobu' }} />
       <View style={styles.hero}><Avatar initials={initials} color={color} size={68} /></View>
       <Text style={styles.label}>Jméno</Text>
-      <TextInput value={name} onChangeText={setName} placeholder="např. Jana Nováková" placeholderTextColor="#91A099" style={styles.input} autoFocus={!profile} />
+      <TextInput editable={editable} value={name} onChangeText={setName} maxLength={limits.profileName} placeholder="např. Jana Nováková" placeholderTextColor="#91A099" style={styles.input} autoFocus={!profile} />
       <Text style={styles.label}>Barva</Text>
       <View style={styles.palette}>
         {palette.map((swatch) => (
-          <Pressable key={swatch} onPress={() => setColor(swatch)} style={[styles.swatch, { backgroundColor: swatch }, color === swatch && styles.swatchActive]}
+          <Pressable key={swatch} disabled={!editable} onPress={() => setColor(swatch)} style={[styles.swatch, { backgroundColor: swatch }, color === swatch && styles.swatchActive]}
             accessibilityRole="radio" accessibilityState={{ selected: color === swatch }} accessibilityLabel={`Barva ${swatch}`}>
             {color === swatch ? <Ionicons name="checkmark" size={22} color={colors.white} /> : null}
           </Pressable>
         ))}
       </View>
-      <Button label={profile ? 'Uložit změny' : 'Přidat osobu'} icon="checkmark" onPress={save} style={styles.save} />
+      {editable ? <Button label={profile ? 'Uložit změny' : 'Přidat osobu'} icon="checkmark" onPress={save} style={styles.save} /> : <Text style={styles.hint}>Údaje upravuje vlastník nebo pečující.</Text>}
       {profile ? <>
         <ContactCard profileId={profile.id} kind="doctor" />
         <ContactCard profileId={profile.id} kind="pharmacy" />
@@ -69,7 +74,7 @@ export default function ProfileScreen() {
 }
 
 function ContactCard({ profileId, kind }: { profileId: string; kind: ContactKind }) {
-  const { data, saveContact, removeContact } = useAppState();
+  const { data, saveContact, removeContact,canEditProfile } = useAppState();
   const contact = data?.prescribers.find((item) => item.profileId === profileId && (item.kind ?? 'doctor') === kind);
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(contact?.name ?? '');
@@ -79,9 +84,10 @@ function ContactCard({ profileId, kind }: { profileId: string; kind: ContactKind
 
   const startEdit = () => { setName(contact?.name ?? ''); setPhone(contact?.phone ?? ''); setEmail(contact?.email ?? ''); setEditing(true); };
   const save = () => {
-    if (!name.trim()) return Alert.alert('Doplňte název', 'Kontakt musí mít jméno nebo název.');
-    if (email.trim() && !/^\S+@\S+\.\S+$/.test(email.trim())) return Alert.alert('Zkontrolujte e-mail', 'E-mailová adresa nevypadá správně.');
-    saveContact({ id: contact?.id, profileId, kind, name, phone, email });
+    const parsed = contactSchema.omit({ id: true, profileId: true }).safeParse({ kind, name: name.trim(), phone: phone.trim(), email: email.trim() });
+    if (!parsed.success) return showMessage('Zkontrolujte kontakt', validationMessage(parsed.error));
+    if (email.trim() && !/^\S+@\S+\.\S+$/.test(email.trim())) return showMessage('Zkontrolujte e-mail', 'E-mailová adresa nevypadá správně.');
+    if (!saveContact({ id: contact?.id, profileId, ...parsed.data })) return;
     setEditing(false);
   };
   const remove = async () => {
@@ -92,12 +98,12 @@ function ContactCard({ profileId, kind }: { profileId: string; kind: ContactKind
 
   return (
     <>
-      <SectionTitle title={labels.title} action={!editing ? <Button label={contact ? 'Upravit' : 'Přidat'} icon={contact ? 'create-outline' : 'add'} variant="ghost" onPress={startEdit} /> : undefined} />
+      <SectionTitle title={labels.title} action={!editing && canEditProfile(profileId) ? <Button label={contact ? 'Upravit' : 'Přidat'} icon={contact ? 'create-outline' : 'add'} variant="ghost" onPress={startEdit} /> : undefined} />
       <Card style={styles.contactCard}>
         {editing ? <>
-          <TextInput value={name} onChangeText={setName} placeholder={labels.placeholder} placeholderTextColor="#91A099" style={styles.input} accessibilityLabel="Jméno nebo název" />
-          <TextInput value={phone} onChangeText={setPhone} placeholder="Telefon" placeholderTextColor="#91A099" keyboardType="phone-pad" style={styles.input} accessibilityLabel="Telefon" />
-          <TextInput value={email} onChangeText={setEmail} placeholder="E-mail (nepovinné)" placeholderTextColor="#91A099" keyboardType="email-address" autoCapitalize="none" style={styles.input} accessibilityLabel="E-mail" />
+          <TextInput value={name} onChangeText={setName} maxLength={limits.contactName} placeholder={labels.placeholder} placeholderTextColor="#91A099" style={styles.input} accessibilityLabel="Jméno nebo název" />
+          <TextInput value={phone} onChangeText={setPhone} maxLength={limits.phone} placeholder="Telefon" placeholderTextColor="#91A099" keyboardType="phone-pad" style={styles.input} accessibilityLabel="Telefon" />
+          <TextInput value={email} onChangeText={setEmail} maxLength={limits.email} placeholder="E-mail (nepovinné)" placeholderTextColor="#91A099" keyboardType="email-address" autoCapitalize="none" style={styles.input} accessibilityLabel="E-mail" />
           <View style={styles.row}>
             <Button label="Uložit" icon="checkmark" onPress={save} style={styles.flex} />
             <Button label="Zrušit" variant="ghost" onPress={() => setEditing(false)} />

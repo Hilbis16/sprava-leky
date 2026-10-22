@@ -1,7 +1,8 @@
+import { showMessage } from '@/components/message';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { router } from 'expo-router';
 import React, { useState } from 'react';
-import { Alert, StyleSheet, Text, TextInput, View } from 'react-native';
+import { StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { Button } from '@/components/ui';
 import { normalizeEreceptId } from '@/domain/erecept';
@@ -13,7 +14,7 @@ export default function ScannerScreen() {
   const [manual, setManual] = useState('');
   const accept = (raw: string) => {
     const id = normalizeEreceptId(raw);
-    if (!id) { setLocked(false); Alert.alert('Tohle nevypadá jako eRecept', 'Očekáváme 12 písmen a číslic. Můžete je zadat ručně.'); return; }
+    if (!id) { setLocked(false); showMessage('Tohle nevypadá jako eRecept', 'Očekáváme 12 písmen a číslic. Můžete je zadat ručně.'); return; }
     router.replace({ pathname: '/medicine/new', params: { ereceptId: id } });
   };
   if (!permission) return <View style={styles.center}><Text>Ověřuji fotoaparát…</Text></View>;

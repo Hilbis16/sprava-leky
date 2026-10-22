@@ -1,15 +1,18 @@
+import { showMessage } from '@/components/message';
 import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import React, { useState } from 'react';
-import { Alert, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
 import { Screen } from '@/components/Screen';
 import { Button, Card } from '@/components/ui';
-import { cloudEnabled } from '@/data/supabase';
+import { apiEnabled } from '@/data/api';
+import { useAuth } from '@/state/AuthState';
 import { useAppState } from '@/state/AppState';
 import { colors } from '@/theme';
 
 export default function AcceptInviteScreen() {
+  const { user,setDemo } = useAuth();
   const params = useLocalSearchParams<{ token?: string | string[] }>();
   const { acceptFamilyInvite } = useAppState();
   const [busy, setBusy] = useState(false);
@@ -17,17 +20,16 @@ export default function AcceptInviteScreen() {
 
   const accept = async () => {
     if (!token) {
-      Alert.alert('Neplatná pozvánka', 'V odkazu chybí bezpečnostní token.');
+      showMessage('Neplatná pozvánka', 'V odkazu chybí bezpečnostní token.');
       return;
     }
     setBusy(true);
     try {
       await acceptFamilyInvite(token);
-      Alert.alert('Hotovo', 'Rodinný profil byl připojený k tomuto zařízení.', [
-        { text: 'Otevřít přehled', onPress: () => router.replace('/family') },
-      ]);
+      router.replace('/family');
+      showMessage('Hotovo', 'Rodinný profil byl připojený k tomuto zařízení.');
     } catch (error) {
-      Alert.alert('Pozvánku nelze přijmout', error instanceof Error ? error.message : 'Pozvánka mohla vypršet nebo už byla použitá.');
+      showMessage('Pozvánku nelze přijmout', error instanceof Error ? error.message : 'Pozvánka mohla vypršet nebo už byla použitá.');
     } finally {
       setBusy(false);
     }
@@ -39,8 +41,9 @@ export default function AcceptInviteScreen() {
         <View style={styles.icon}><Ionicons name="people" size={34} color={colors.primary} /></View>
         <Text style={styles.title}>Rodinná pozvánka</Text>
         <Text style={styles.body}>Po potvrzení uvidíte sdílený přehled léků, zásob a žádostí. Pozvánku lze použít pouze jednou.</Text>
-        {!cloudEnabled ? <View style={styles.warning}><Ionicons name="cloud-offline-outline" size={20} color={colors.warning} /><Text style={styles.warningText}>Tato instalace zatím nemá připojený Supabase cloud.</Text></View> : null}
-        <Button label={busy ? 'Připojuji…' : 'Přijmout pozvánku'} icon="checkmark-circle-outline" disabled={busy || !cloudEnabled || !token} onPress={() => void accept()} style={styles.button} />
+        {!apiEnabled ? <View style={styles.warning}><Ionicons name="cloud-offline-outline" size={20} color={colors.warning} /><Text style={styles.warningText}>Tato instalace zatím nemá připojenou službu.</Text></View> : null}
+        {!user && apiEnabled ? <Button label="Přihlásit se pro přijetí" onPress={() => setDemo(false)} style={styles.button} /> : null}
+        <Button label={busy ? 'Připojuji…' : 'Přijmout pozvánku'} icon="checkmark-circle-outline" disabled={busy || !apiEnabled || !user || !token} onPress={() => void accept()} style={styles.button} />
         <Button label="Zpět do aplikace" variant="ghost" onPress={() => router.replace('/')} />
       </Card>
     </Screen>

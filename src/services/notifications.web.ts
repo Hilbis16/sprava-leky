@@ -1,23 +1,16 @@
-import type { AppData, Medication, RegimenRule } from '@/domain/types';
+import type { AppData } from '@/domain/types';
+import type { ReminderUpdate } from './reminderPlan';
 
 export async function requestNotificationPermission(): Promise<boolean> {
   return false;
 }
 
-export async function scheduleMedicationReminders(_medication: Medication, _regimen: RegimenRule): Promise<void> {
-  // Mobile builds schedule OS-level notifications. Web remains a preview target.
-}
-
-export async function registerPushDevice(): Promise<void> {
+export async function registerPushDevice(_accountId: string): Promise<void> {
   // Remote push is only delivered to mobile devices.
 }
 
-export async function cancelMedicationReminders(_medicationId: string): Promise<void> {
-  // Nothing is scheduled on web.
-}
-
-export async function scheduleStockAlerts(_data: AppData): Promise<void> {
-  // The web preview shows stock warnings in the app only.
+export async function reconcileLocalReminders(_data: AppData,_now = new Date()): Promise<ReminderUpdate | undefined> {
+  return { supported: false,permissionGranted: false };
 }
 
 export function subscribeToNotificationRoutes(_navigate: (route: string) => void): () => void {

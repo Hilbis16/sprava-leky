@@ -1,14 +1,16 @@
+import { showMessage } from '@/components/message';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import React, { useMemo, useState } from 'react';
-import { Alert, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 
 import { Screen } from '@/components/Screen';
 import { Button, Card } from '@/components/ui';
 import { formatEreceptId, normalizeEreceptId } from '@/domain/erecept';
 import { formatCzechDate, localDateKey, normalizeTime, parseCzechDate } from '@/domain/schedule';
 import type { DayPeriod, DoseUnit } from '@/domain/types';
+import { limits, medicineDetailsSchema, medicineDraftSchema, parseQuantity, positiveQuantitySchema, validationMessage } from '@/domain/validation';
 import { daysLabel, everyDay, weekDays } from '@/domain/weekdays';
 // Metro selects ocr.native.ts or ocr.web.ts for the target platform.
 // eslint-disable-next-line import/no-unresolved
@@ -24,7 +26,7 @@ type PeriodState = { enabled: boolean; amount: number; time: string };
 
 export default function AddMedicineScreen() {
   const params = useLocalSearchParams<{ ereceptId?: string; id?: string }>();
-  const { data, addMedicine, updateMedicine } = useAppState();
+  const { data, addMedicine, updateMedicine,canEditProfile } = useAppState();
   const editing = params.id ? data?.medications.find((item) => item.id === params.id) : undefined;
   const editingRegimen = editing ? data?.regimens.find((item) => item.medicationId === editing.id) : undefined;
   const [step, setStep] = useState(1);
@@ -50,6 +52,7 @@ export default function AddMedicineScreen() {
     .map((key) => ({ period: key, time: normalizeTime(periods[key].time) ?? periods[key].time, amount: periods[key].amount }))
     .sort((left, right) => left.time.localeCompare(right.time)), [periods]);
   if (!data || !profile) return null;
+  if (!canEditProfile(profile.id)) return <Screen><Text>Úpravy léků jsou dostupné vlastníkovi a pečujícím.</Text></Screen>;
   const setPeriod = (period: DayPeriod, change: Partial<PeriodState>) =>
     setPeriods((current) => ({ ...current, [period]: { ...current[period], ...change } }));
   const toggleDay = (day: number) => setDays((current) => current.includes(day) ? current.filter((item) => item !== day) : [...current, day].sort());
@@ -57,7 +60,7 @@ export default function AddMedicineScreen() {
   const captureBox = async () => {
     try {
       const permission = await ImagePicker.requestCameraPermissionsAsync();
-      if (!permission.granted) return Alert.alert('Fotoaparát není povolen', 'Lék můžete zadat ručně, nebo povolit fotoaparát v nastavení telefonu.');
+      if (!permission.granted) return showMessage('Fotoaparát není povolen', 'Lék můžete zadat ručně, nebo povolit fotoaparát v nastavení telefonu.');
       const image = await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.9, allowsEditing: true });
       if (image.canceled || !image.assets[0]) return;
       setOcrBusy(true);
@@ -65,36 +68,43 @@ export default function AddMedicineScreen() {
       if (result.suggestedName) setName(result.suggestedName);
       if (result.suggestedStrength) setStrength(result.suggestedStrength);
       if (result.suggestedPackageSize) setPackageSize(String(result.suggestedPackageSize));
-      Alert.alert('Text byl rozpoznán', 'Před pokračováním prosím všechny údaje zkontrolujte.');
+      showMessage('Text byl rozpoznán', 'Před pokračováním prosím všechny údaje zkontrolujte.');
     } catch (error) {
-      Alert.alert('Rozpoznání se nezdařilo', error instanceof Error ? error.message : 'Použijte ruční zadání.');
+      showMessage('Rozpoznání se nezdařilo', error instanceof Error ? error.message : 'Použijte ruční zadání.');
     } finally { setOcrBusy(false); }
   };
 
   const next = () => {
-    if (step === 1 && !name.trim()) return Alert.alert('Doplňte název', 'Název léku je povinný.');
-    if (step === 2 && (!Number(packageSize) || Number(packageSize) <= 0 || times.length === 0)) return Alert.alert('Zkontrolujte údaje', 'Zadejte počet kusů a vyberte alespoň jednu denní dávku.');
-    if (step === 2 && days.length === 0) return Alert.alert('Vyberte dny', 'Lék musí mít alespoň jeden den v týdnu.');
-    if (step === 2 && times.some((time) => !normalizeTime(time.time))) return Alert.alert('Neplatný čas', 'Čas zadejte ve tvaru 08:00.');
-    if (step === 2 && new Set(times.map((time) => time.time)).size !== times.length) return Alert.alert('Stejný čas', 'Dvě dávky nemohou mít stejný čas.');
-    if (step === 2 && limited && !parseCzechDate(endDate)) return Alert.alert('Zkontrolujte datum', 'Poslední den léčby zadejte ve tvaru 31. 12. 2026.');
-    if (step === 2 && limited && parseCzechDate(endDate)! < localDateKey(new Date())) return Alert.alert('Datum je v minulosti', 'Poslední den léčby nemůže být dříve než dnes.');
+    const details = medicineDetailsSchema.safeParse({ name, strength, note });
+    if (step === 1 && !details.success) return showMessage('Zkontrolujte údaje', validationMessage(details.error));
+    if (step === 1 && ereceptId.trim() && !normalizeEreceptId(ereceptId)) return showMessage('Zkontrolujte eRecept', 'Identifikátor eReceptu musí mít 12 písmen nebo číslic.');
+    const quantity = positiveQuantitySchema.safeParse(parseQuantity(packageSize));
+    if (step === 2 && !quantity.success) return showMessage('Zkontrolujte počet', validationMessage(quantity.error));
+    if (step === 2 && times.length === 0) return showMessage('Vyberte dávku', 'Vyberte alespoň jednu denní dávku.');
+    if (step === 2 && times.some((time) => !positiveQuantitySchema.safeParse(time.amount).success)) return showMessage('Zkontrolujte množství', 'Množství dávky musí být kladné, nejvýše 1 000 000 a mít nejvýše dvě desetinná místa.');
+    if (step === 2 && days.length === 0) return showMessage('Vyberte dny', 'Lék musí mít alespoň jeden den v týdnu.');
+    if (step === 2 && times.some((time) => !normalizeTime(time.time))) return showMessage('Neplatný čas', 'Čas zadejte ve tvaru 08:00.');
+    if (step === 2 && new Set(times.map((time) => time.time)).size !== times.length) return showMessage('Stejný čas', 'Dvě dávky nemohou mít stejný čas.');
+    if (step === 2 && limited && !parseCzechDate(endDate)) return showMessage('Zkontrolujte datum', 'Poslední den léčby zadejte ve tvaru 31. 12. 2026.');
+    if (step === 2 && limited && parseCzechDate(endDate)! < localDateKey(new Date())) return showMessage('Datum je v minulosti', 'Poslední den léčby nemůže být dříve než dnes.');
     setStep((value) => Math.min(3, value + 1));
   };
 
   const save = async () => {
     const draft = {
-      profileId: profile.id, name, strength, packageSize: Number(packageSize), unit, prescription,
+      profileId: profile.id, name, strength, packageSize: parseQuantity(packageSize), unit, prescription,
       ereceptId: normalizeEreceptId(ereceptId) ?? undefined, times, daysOfWeek: days,
       note, endsOn: limited ? parseCzechDate(endDate) ?? undefined : undefined,
     };
+    const parsed = medicineDraftSchema.safeParse(draft);
+    if (!parsed.success) return showMessage('Změnu nelze uložit', validationMessage(parsed.error));
     if (editing) {
-      updateMedicine(editing.id, draft);
+      if (!updateMedicine(editing.id, parsed.data)) return;
       router.back();
       return;
     }
-    const id = await addMedicine(draft);
-    router.replace(`/medicine/${id}`);
+    const id = await addMedicine(parsed.data);
+    if (id) router.replace(`/medicine/${id}`);
   };
 
   return (
@@ -109,8 +119,8 @@ export default function AddMedicineScreen() {
             <Button label={ocrBusy ? 'Rozpoznávám…' : 'Vyfotit krabičku'} icon="camera-outline" onPress={() => void captureBox()} disabled={ocrBusy} style={styles.capture} />
             <Button label="QR eRecept" icon="qr-code-outline" variant="secondary" onPress={() => router.push('/scanner')} style={styles.capture} />
           </View>
-          <Field label="Název léku" value={name} onChangeText={setName} placeholder="např. Atorvastatin" autoFocus />
-          <Field label="Síla" value={strength} onChangeText={setStrength} placeholder="např. 20 mg" />
+          <Field label="Název léku" value={name} onChangeText={setName} placeholder="např. Atorvastatin" maxLength={limits.medicationName} autoFocus />
+          <Field label="Síla" value={strength} onChangeText={setStrength} placeholder="např. 20 mg" maxLength={limits.text} />
           <Field label="Pokyny k užívání (nepovinné)" value={note} onChangeText={setNote} placeholder="např. nalačno, zapít vodou" maxLength={200} />
           <Field label="ID eReceptu (volitelné)" value={ereceptId} onChangeText={setEreceptId} placeholder="XXXX XXXX XXXX" autoCapitalize="characters" />
           <Text style={styles.hint}><Ionicons name="shield-checkmark-outline" size={15} /> Fotografie se zpracuje v telefonu a neukládá se do cloudu.</Text>

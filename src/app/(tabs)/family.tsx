@@ -1,20 +1,24 @@
+import { showMessage } from '@/components/message';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import React, { useEffect, useState } from 'react';
-import { Alert, Modal, Pressable, Share, StyleSheet, Text, View } from 'react-native';
+import { Modal, Platform, Pressable, Share, StyleSheet, Text, View } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
 
 import { PinDialog } from '@/components/PinDialog';
+import { confirmAction } from '@/components/confirm';
 import { Screen } from '@/components/Screen';
 import { Avatar, Button, Card, SectionTitle, StatusPill } from '@/components/ui';
 import { createFamilyInvite, type FamilyInvite, type InviteRole } from '@/data/invites';
 import { getSeniorPin, setSeniorPin } from '@/data/pinStore';
-import { cloudEnabled } from '@/data/supabase';
+import { apiEnabled } from '@/data/api';
+import { useAuth } from '@/state/AuthState';
 import { useAppState } from '@/state/AppState';
 import { colors } from '@/theme';
 
 export default function FamilyScreen() {
-  const { data, syncMessage, syncNow, resetDemo, setActiveRole } = useAppState();
+  const { data, syncMessage, syncNow, syncConflict, importLocalData, resetDemo, setActiveRole,canEditProfile,reminderWarning,reminderRefreshBefore,refreshReminders } = useAppState();
+  const { user,signOut,setDemo } = useAuth();
   const [invite, setInvite] = useState<FamilyInvite | null>(null);
   const [inviteBusy, setInviteBusy] = useState(false);
   const [hasPin, setHasPin] = useState(false);
@@ -25,18 +29,20 @@ export default function FamilyScreen() {
   const enterSeniorMode = () => { setPinStep('none'); setActiveRole('senior'); };
   const storePin = async (pin: string | null) => { await setSeniorPin(pin); setHasPin(Boolean(pin)); };
   const currentProfile = data.profiles.find((profile) => profile.id === data.currentProfileId) ?? data.profiles[0];
+  const mayInvite = Boolean(currentProfile && canEditProfile(currentProfile.id));
 
   const openInvite = async (role: InviteRole) => {
     if (!currentProfile) return;
-    if (!cloudEnabled) {
-      Alert.alert('Pozvánky potřebují cloud', 'Doplňte Supabase proměnné a spusťte migrace. Lokální demo zůstává plně funkční bez účtu.');
+    if (!apiEnabled || !user) {
+      showMessage('Pozvánky potřebují účet', 'Pro sdílení rodinných dat se přihlaste.');
       return;
     }
     setInviteBusy(true);
     try {
-      setInvite(await createFamilyInvite(currentProfile.id, role));
+      await syncNow();
+      setInvite(await createFamilyInvite(currentProfile.id, role,user.id));
     } catch (error) {
-      Alert.alert('Pozvánku se nepodařilo vytvořit', error instanceof Error ? error.message : 'Zkuste to prosím znovu.');
+      showMessage('Pozvánku se nepodařilo vytvořit', error instanceof Error ? error.message : 'Zkuste to prosím znovu.');
     } finally {
       setInviteBusy(false);
     }
@@ -75,17 +81,38 @@ export default function FamilyScreen() {
       })}
       <Button label="Přidat osobu" icon="person-add-outline" variant="ghost" onPress={() => router.push({ pathname: '/profile/[id]', params: { id: 'new' } })} style={styles.addPerson} />
       <View style={styles.inviteActions}>
-        <Button label="Pozvat pečujícího" icon="person-add-outline" variant="secondary" disabled={inviteBusy} onPress={() => void openInvite('caregiver')} style={styles.flex} />
-        <Button label="Připojit seniora" icon="qr-code-outline" variant="secondary" disabled={inviteBusy} onPress={() => void openInvite('senior')} style={styles.flex} />
+        <Button label="Pozvat pečujícího" icon="person-add-outline" variant="secondary" disabled={inviteBusy || !mayInvite} onPress={() => void openInvite('caregiver')} style={styles.flex} />
+        <Button label="Připojit seniora" icon="qr-code-outline" variant="secondary" disabled={inviteBusy || !mayInvite} onPress={() => void openInvite('senior')} style={styles.flex} />
       </View>
       <SectionTitle title="Synchronizace" />
       <Card>
-        <View style={styles.settingRow}><Ionicons name={cloudEnabled ? 'cloud-done-outline' : 'phone-portrait-outline'} size={25} color={colors.primary} /><View style={styles.flex}><Text style={styles.settingTitle}>{cloudEnabled ? 'EU cloud je připojený' : 'Lokální demo režim'}</Text><Text style={styles.settingBody}>{syncMessage}</Text></View></View>
-        <Button label="Synchronizovat nyní" icon="sync-outline" onPress={() => void syncNow()} style={styles.syncButton} />
+        <View style={styles.settingRow}><Ionicons name={user ? 'cloud-done-outline' : 'phone-portrait-outline'} size={25} color={colors.primary} /><View style={styles.flex}><Text style={styles.settingTitle}>{user ? user.email : 'Lokální demo režim'}</Text><Text style={styles.settingBody}>{syncMessage}</Text></View></View>
+        {user ? <Button label="Synchronizovat nyní" icon="sync-outline" onPress={() => void syncNow()} style={styles.syncButton} /> : apiEnabled ? <Button label="Přihlásit se" onPress={() => setDemo(false)} style={styles.syncButton} /> : null}
+        {syncConflict ? <><Text style={styles.settingBody}>Jiné zařízení změnilo stejný profil. Vyberte, které změny chcete zachovat.</Text>
+          <Button label="Odeslat moje změny" variant="secondary" onPress={() => void (async () => { if (await confirmAction('Odeslat místní změny?', 'Vaše neodeslané změny se použijí nad aktuálními daty serveru. Mohou přepsat úpravy jiného zařízení.','Odeslat')) await syncNow('force'); })()} style={styles.syncButton} />
+          <Button label="Použít data ze serveru" variant="ghost" onPress={() => void (async () => { if (await confirmAction('Zahodit neodeslané změny?', 'Místní neodeslané změny budou nahrazeny daty ze serveru.','Nahradit',true)) await syncNow('discard'); })()} />
+        </> : null}
+        {user && !data.profiles.length ? <Button label="Přenést původní data ze zařízení" variant="secondary" onPress={() => void (async () => {
+          if (!await confirmAction('Přenést původní data?', 'Lokální data včetně případného dema budou nahrána do tohoto účtu. Původní kopie zůstane v zařízení.','Přenést')) return;
+          try { await importLocalData(); } catch (error) { showMessage('Přenos se nezdařil',error instanceof Error ? error.message : 'Zkuste to znovu.'); }
+        })()} style={styles.syncButton} /> : null}
+        {user ? <Button label="Odhlásit se" variant="ghost" onPress={() => void (async () => {
+          if (!await confirmAction('Odhlásit se?', 'Neodeslané změny zůstanou uložené pro tento účet v zařízení.','Odhlásit')) return;
+          try { await signOut(); } catch { showMessage('Odhlášení se nezdařilo','Připojte se k internetu a zkuste to znovu.'); }
+        })()} /> : null}
       </Card>
-      <SectionTitle title="Nastavení pilotu" />
+      <SectionTitle title="Nastavení" />
       <Card>
-        <View style={styles.settingRow}><Ionicons name="notifications-outline" size={24} color={colors.primary} /><View style={styles.flex}><Text style={styles.settingTitle}>Upozornění na nepotvrzenou dávku</Text><Text style={styles.settingBody}>{cloudEnabled ? `Pečujícím po ${data.notificationPreferences.missedDoseDelayMinutes / 60} hodinách, bez názvu léku` : 'Funguje po připojení EU cloudu'}</Text></View></View>
+        {Platform.OS !== 'web' ? <>
+          <View style={styles.settingRow}><Ionicons name="alarm-outline" size={24} color={colors.primary} /><View style={styles.flex}>
+            <Text style={styles.settingTitle}>Připomínky v telefonu</Text>
+            <Text style={styles.settingBody}>{reminderWarning ?? 'Připomínky se řídí aktuálním rozvrhem a posledním dnem léčby.'}</Text>
+            {reminderRefreshBefore ? <Text style={styles.settingBody}>Další termíny doplníte otevřením aplikace před {new Date(reminderRefreshBefore).toLocaleString('cs-CZ',{ dateStyle: 'short',timeStyle: 'short' })}.</Text> : null}
+          </View></View>
+          <Button label="Povolit a zkontrolovat připomínky" variant="secondary" onPress={() => void refreshReminders(true)} style={styles.syncButton} />
+          <View style={styles.divider} />
+        </> : null}
+        <View style={styles.settingRow}><Ionicons name="notifications-outline" size={24} color={colors.primary} /><View style={styles.flex}><Text style={styles.settingTitle}>Upozornění na nepotvrzenou dávku</Text><Text style={styles.settingBody}>{user ? 'Podle nastavení služby, bez názvu léku; vyžaduje povolené notifikace.' : 'Dostupné po přihlášení a propojení zařízení.'}</Text></View></View>
         <View style={styles.divider} />
         <Pressable style={styles.settingRow} onPress={() => setPinStep('change')} accessibilityRole="button">
           <Ionicons name="keypad-outline" size={24} color={colors.primary} />
@@ -95,7 +122,7 @@ export default function FamilyScreen() {
         <View style={styles.divider} />
         <View style={styles.settingRow}><Ionicons name="lock-closed-outline" size={24} color={colors.primary} /><View style={styles.flex}><Text style={styles.settingTitle}>Soukromí</Text><Text style={styles.settingBody}>Fotografie pro OCR zůstávají v zařízení.</Text></View></View>
       </Card>
-      <Button label="Obnovit demo data" variant="ghost" onPress={() => Alert.alert('Obnovit demo?', 'Vaše lokální změny budou nahrazeny ukázkovými daty.', [{ text: 'Zrušit', style: 'cancel' }, { text: 'Obnovit', style: 'destructive', onPress: () => void resetDemo() }])} style={styles.reset} />
+      {!user ? <Button label="Obnovit demo data" variant="ghost" onPress={() => void (async () => { if (await confirmAction('Obnovit demo?', 'Lokální změny dema budou nahrazeny ukázkovými daty.','Obnovit',true)) await resetDemo(); })()} style={styles.reset} /> : null}
       <PinDialog visible={pinStep !== 'none'}
         title={pinStep === 'beforeSenior' ? 'Zamknout režim seniora?' : hasPin ? 'Změnit PIN' : 'Nastavit PIN'}
         body="Režim seniora pak půjde opustit jen po zadání PINu, takže senior omylem nezmění nastavení. PIN zůstává jen v tomto zařízení."

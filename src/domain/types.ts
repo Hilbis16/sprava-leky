@@ -17,6 +17,7 @@ export interface Membership {
   profileId: string;
   userName: string;
   role: Role;
+  userId?: string;
 }
 
 export interface DoseTime {
@@ -137,6 +138,7 @@ export interface AppData {
   lastSyncedAt?: string;
   /** Cloud user this device has already uploaded its full local history for. */
   cloudBootstrappedFor?: string;
+  remoteRevisions?: Record<string, number>;
 }
 
 export interface ForecastResult {

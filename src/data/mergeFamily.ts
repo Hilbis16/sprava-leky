@@ -9,6 +9,7 @@ import type {
   RegimenRule,
   RxRequest,
 } from '@/domain/types';
+import { createEmptyData } from './empty';
 
 export interface FamilySnapshot {
   profile: CareProfile;
@@ -19,6 +20,13 @@ export interface FamilySnapshot {
   doseActions: DoseAction[];
   prescribers: PrescriberContact[];
   rxRequests: RxRequest[];
+}
+
+/** The server is authoritative, including revoked memberships and deleted profiles. */
+export function replaceFamilySnapshots(base: AppData, snapshots: FamilySnapshot[]): AppData {
+  const remote = mergeFamilySnapshots(createEmptyData(),snapshots);
+  return { ...remote,currentProfileId: remote.profiles.some((p) => p.id === base.currentProfileId) ? base.currentProfileId : remote.currentProfileId,
+    activeRole: base.activeRole,notificationPreferences: base.notificationPreferences,cloudBootstrappedFor: base.cloudBootstrappedFor };
 }
 
 export function mergeFamilySnapshots(base: AppData, snapshots: FamilySnapshot[]): AppData {
